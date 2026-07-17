@@ -1,5 +1,11 @@
 # Launch checklist — target: top of GitHub trending (daily)
 
+> **STATUS 2026-07-17:** repo taken PRIVATE by Malek's call after a ~10-minute public
+> window (nothing was posted anywhere). Relaunch gate: security audit clean + v0.3
+> serve (write-back app) polished. When relaunching: flip visibility public, verify
+> CI badge renders, then resume at "Launch morning" below. The v0.2.0 release,
+> topics, GIF, and screenshots are already in place.
+
 Reality check on the number: #1 daily overall needs roughly 400-800 stars in 24h;
 #1 in Python needs roughly 150-300. That volume comes from HN front page + Reddit +
 X landing the same morning. The repo just has to not fumble the traffic.

@@ -85,16 +85,26 @@ class Handler(BaseHTTPRequestHandler):
         if body:
             self.wfile.write(body)
 
+    def _host_ok(self) -> bool:
+        """Reject DNS-rebinding: the Host header must name this loopback server,
+        otherwise a hostile page that rebound its domain to 127.0.0.1 could read
+        the console (and the CSRF token inside it)."""
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        return host in ("127.0.0.1", "localhost")
+
     def _same_origin(self) -> bool:
         """Origin/Referer, when a browser sends one, must be this server."""
         for h in ("Origin", "Referer"):
             val = self.headers.get(h)
             if val:
-                host = urllib.parse.urlparse(val).netloc.split(":")[0]
+                host = urllib.parse.urlparse(val).netloc.split(":")[0].lower()
                 return host in ("127.0.0.1", "localhost")
         return True  # header-less client (curl); the token check still gates the write
 
     def do_GET(self):
+        if not self._host_ok():
+            self._send(403, b"bad host")
+            return
         url = urllib.parse.urlparse(self.path)
         if url.path == "/":
             try:
@@ -107,6 +117,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found")
 
     def do_POST(self):
+        if not self._host_ok():
+            self._send(403, b"bad host")
+            return
         if self.path != "/act":
             self._send(404, b"not found")
             return
@@ -190,6 +203,41 @@ def _sync_loop():
             _bump()
         except Exception:
             pass  # next tick retries; the console keeps serving current state
+
+
+PLIST_BODY = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.opsroom.console</string>
+  <key>ProgramArguments</key><array>
+    <string>{exe}</string><string>serve</string><string>--no-open</string>
+    <string>--port</string><string>{port}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict></plist>
+"""
+
+
+def install_always_on(port=PORT) -> bool:
+    """macOS launchd agent so the console survives reboots. Reversible:
+    launchctl unload <plist> && rm <plist>."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    exe = shutil.which("opsroom")
+    if not exe:
+        print("opsroom is not on PATH — install it first (pipx/uv tool), then retry")
+        return False
+    plist = Path.home() / "Library" / "LaunchAgents" / "com.opsroom.console.plist"
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_text(PLIST_BODY.format(exe=exe, port=port))
+    subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
+    r = subprocess.run(["launchctl", "load", str(plist)], capture_output=True, text=True)
+    ok = r.returncode == 0
+    print(f"always-on {'installed' if ok else 'FAILED'}: {plist}" + ("" if ok else f"\n{r.stderr}"))
+    return ok
 
 
 def serve(port=PORT, open_browser=True):

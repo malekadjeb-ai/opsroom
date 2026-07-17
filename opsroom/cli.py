@@ -116,6 +116,8 @@ def main():
                                        "(touches, follow-ups, cash, leads). Loopback only.")
     vp2.add_argument("--port", type=int, default=7337)
     vp2.add_argument("--no-open", action="store_true")
+    vp2.add_argument("--always-on", action="store_true",
+                     help="macOS: install a launchd agent so the console survives reboots")
     sub.add_parser("today", help="what did I actually do today").add_argument(
         "--offset", type=int, default=0, help="days back")
     sub.add_parser("week", help="7-day activity + drift")
@@ -146,6 +148,8 @@ def main():
         return demo.run()
     if args.cmd == "serve":
         from . import serve as _serve
+        if args.always_on:
+            return 0 if _serve.install_always_on(port=args.port) else 1
         return _serve.serve(port=args.port, open_browser=not args.no_open) or 0
     if args.cmd == "sync":
         return cmd_sync(args)

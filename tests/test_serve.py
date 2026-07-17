@@ -94,6 +94,15 @@ def main():
         # unknown action + oversized body rejected
         code, _ = post(base + "/act", {"do": "nuke", "token": serve.TOKEN})
         assert code == 400
+
+        # DNS-rebinding: a request whose Host is not loopback must be refused
+        req = urllib.request.Request(base + "/", headers={"Host": "evil.example"})
+        try:
+            r = urllib.request.urlopen(req, timeout=5)
+            code = r.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        assert code == 403, f"rebound Host accepted: {code}"
         httpd.shutdown()
     print("serve gate: render, CSRF, origin, writes, cadence, ledger math")
     return 0
