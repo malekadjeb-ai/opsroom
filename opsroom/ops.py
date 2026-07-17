@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS cash (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL, amount REAL NOT NULL, venture TEXT, what TEXT
 );
+CREATE TABLE IF NOT EXISTS spend (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL, amount REAL NOT NULL, venture TEXT, what TEXT
+);
 CREATE TABLE IF NOT EXISTS leads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   added TEXT NOT NULL, name TEXT NOT NULL, phone TEXT, service TEXT, note TEXT,
@@ -119,6 +123,13 @@ def log_cash(con, amount: float, venture: str, what: str = "") -> None:
     con.commit()
 
 
+def log_spend(con, amount: float, venture: str, what: str = "") -> None:
+    """Append-only money-out ledger — the other half of the P&L."""
+    con.execute("INSERT INTO spend (ts, amount, venture, what) VALUES (?,?,?,?)",
+                (_now(), amount, venture, what))
+    con.commit()
+
+
 def add_lead(con, name: str, phone: str = "", service: str = "", note: str = "") -> int:
     cur = con.execute(
         "INSERT INTO leads (added, name, phone, service, note) VALUES (?,?,?,?,?)",
@@ -197,6 +208,29 @@ def cash_total(con) -> float:
 
 def cash_entries(con, limit: int = 20) -> list:
     return con.execute("SELECT * FROM cash ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+
+
+def spend_total(con) -> float:
+    return con.execute("SELECT COALESCE(SUM(amount),0) s FROM spend").fetchone()["s"]
+
+
+def spend_entries(con, limit: int = 20) -> list:
+    return con.execute("SELECT * FROM spend ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+
+
+def roi_rows(con) -> list:
+    """Per-venture P&L: money in vs money out vs net, from the two append-only
+    ledgers. Attribution is honest and simple — whatever venture you logged."""
+    cash_by = {r["v"]: r["s"] for r in con.execute(
+        "SELECT COALESCE(venture,'') v, SUM(amount) s FROM cash GROUP BY 1")}
+    spend_by = {r["v"]: r["s"] for r in con.execute(
+        "SELECT COALESCE(venture,'') v, SUM(amount) s FROM spend GROUP BY 1")}
+    rows = []
+    for v in sorted(set(cash_by) | set(spend_by)):
+        c, s = int(cash_by.get(v, 0)), int(spend_by.get(v, 0))
+        rows.append({"venture": v or "unattributed", "collected": c, "spend": s,
+                     "net": c - s})
+    return rows
 
 
 def leads_open(con) -> list:

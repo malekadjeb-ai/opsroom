@@ -397,6 +397,46 @@ def _search_panel(sx):
 </div>"""
 
 
+def _sim_card(st, cash, goal, days, open_leads):
+    """Path-to-goal simulator — what-if math the operator can drag, all client-side.
+    Live numbers are baked in server-side; nothing leaves the page, nothing persists.
+    Knob rows come from YOUR configured revenue ventures — this is generic math,
+    not a forecast; the ledger is the only truth."""
+    revs = [(k, v) for k, v in ventures.VENTURES.items()
+            if k != "unknown" and not v.get("trap")][:4]
+    knobs = "".join(
+        f"<label>{esc(v['label'])} closes <select id='s_c{i}' oninput='sim()'>"
+        + "".join(f"<option>{n}</option>" for n in range(4))
+        + f"</select> × avg $<input id='s_a{i}' value='1000' inputmode='decimal' "
+          f"size='6' oninput='sim()'></label>"
+        for i, (k, v) in enumerate(revs))
+    knobs += (f"<label>of <b>{open_leads}</b> open leads, close "
+              f"<input id='s_lp' value='20' size='3' inputmode='decimal' oninput='sim()'>% "
+              f"at avg $<input id='s_la' value='500' size='5' inputmode='decimal' "
+              f"oninput='sim()'></label>")
+    sums = "+".join(f"n('s_c{i}')*n('s_a{i}')" for i in range(len(revs))) or "0"
+    return f"""<div class="card"><div class="cardhead">
+<h3>🧮 Path to {esc(st['goal_label'])} — simulator</h3>
+<span class="hint">what-if, not a forecast — the ledger is the only truth</span></div>
+<div class="sim">{knobs}</div>
+<p class="simout" id="simout"></p>
+<script>
+var SIM={{cash:{int(cash)},goal:{int(goal)},days:{days if days is not None else 'null'},leads:{int(open_leads)}}};
+function sim(){{
+  var n=function(id){{var el=document.getElementById(id);return el?(parseFloat(el.value)||0):0}};
+  var land=SIM.cash+{sums}+SIM.leads*(n('s_lp')/100)*n('s_la');
+  var gap=SIM.goal-land;
+  var fmt=function(x){{return '$'+Math.round(x).toLocaleString()}};
+  var when=SIM.days===null?'':' in '+SIM.days+' days';
+  document.getElementById('simout').innerHTML=
+    'That path lands at <b>'+fmt(land)+'</b>'+when+' — '+
+    (gap>0?'<b style="color:var(--leak)">'+fmt(gap)+' short.</b>'
+          :'<b style="color:var(--go)">'+fmt(-gap)+' past the goal.</b>');
+}}
+sim();
+</script></div>"""
+
+
 def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=None):
     links = config.load()["links"]
     today = datetime.now().astimezone().date()
@@ -514,6 +554,14 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
         band = (f"<p class='hint'>Honest band: <b>{esc(st['band'])}</b></p>"
                 if st.get("band") else "")
         days_danger = "leak" if (days or 99) < 14 else ""
+        pl_cells = ""
+        if serve_ctx:
+            spent = int(serve_ctx.get("spend_total") or 0)
+            net = cash - spent
+            pl_cells = (f"<div><span class='rlbl'>spent</span><span class='rnum "
+                        f"{'leak' if spent else ''}'>${spent:,}</span></div>"
+                        f"<div><span class='rlbl'>net (P&amp;L)</span><span class='rnum "
+                        f"{'go' if net >= 0 else 'leak'}'>${net:,}</span></div>")
         money_tab = f"""<section class="runway">
   <div class="runway-top">
     <div><span class="rnum go">${cash:,}</span><span class="rlbl">collected</span></div>
@@ -525,7 +573,7 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
     <div><span class="rlbl">remaining</span><span class="rnum">${remaining:,}</span></div>
     <div><span class="rlbl">days left</span><span class="rnum {days_danger}">{days if days is not None else '—'}</span></div>
     <div><span class="rlbl">needed / day</span><span class="rnum">${per_day:,}</span></div>
-    <div><span class="rlbl">baseline</span><span class="rnum sm">{esc(st['baseline_raw'][:28]) or '—'}</span></div>
+    {pl_cells or f"<div><span class='rlbl'>baseline</span><span class='rnum sm'>{esc(st['baseline_raw'][:28]) or '—'}</span></div>"}
   </div>
   {band}
   <p class="hint">Cash counts only when <b>collected</b> — not quoted, not booked.
@@ -548,6 +596,29 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
 <input name="what" placeholder="for what">
 <button class="btn small">record</button></form>
 <table>{entry_rows or '<tr><td class="hint">nothing collected yet — the first entry moves the bar</td></tr>'}</table></div>"""
+            spend_rows = "".join(
+                f"<tr><td>{esc(e['ts'][:10])}</td><td><b class='warn'>−${int(e['amount']):,}</b></td>"
+                f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
+                for e in serve_ctx["spend_entries"])
+            money_tab += f"""<div class="card"><div class="cardhead"><h3>💸 Spend ledger (money out — makes the P&amp;L honest)</h3></div>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="spend">
+<input name="amount" placeholder="$ spent" required inputmode="decimal">
+<select name="venture">{vopts}</select>
+<input name="what" placeholder="on what (ads, tools, gear…)">
+<button class="btn small gray">record spend</button></form>
+<table>{spend_rows or '<tr><td class="hint">nothing logged out yet — ads, tools, and gear go here</td></tr>'}</table></div>"""
+            roi = serve_ctx.get("roi") or []
+            if roi:
+                roi_rows_html = "".join(
+                    f"<tr><td><b>{esc(ventures.VENTURES.get(r['venture'], {}).get('label', r['venture']))}</b></td>"
+                    f"<td>${r['collected']:,}</td><td>${r['spend']:,}</td>"
+                    f"<td><b class='{'warn' if r['net'] < 0 else ''}'>"
+                    f"{'−' if r['net'] < 0 else ''}${abs(r['net']):,}</b></td></tr>" for r in roi)
+                money_tab += f"""<div class="card"><div class="cardhead"><h3>📈 Where the money comes from — per-venture P&amp;L</h3></div>
+<table><tr><th>venture</th><th>in</th><th>out</th><th>net</th></tr>{roi_rows_html}</table>
+<p class="hint">Attribution is whatever venture you logged on each entry — honest and simple.</p></div>"""
+            money_tab += _sim_card(st, cash, goal, days, len(serve_ctx.get("leads") or []))
     else:
         money_tab = ("<div class='card'><h3>No goal configured</h3><p class='hint'>Set "
                      "[goal] amount + deadline in config.toml (or run <b>opsroom init</b>) and the "
@@ -796,6 +867,12 @@ form.row input:focus,form.row select:focus{{outline:0;border-color:var(--go-line
 form.row select{{flex:0 1 160px;cursor:pointer}}
 input.amt{{width:76px;background:var(--bg2);border:1px solid var(--line);border-radius:7px;
   color:var(--ink);padding:5px 9px;font:13px var(--mono)}}
+.sim{{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:6px 0}}
+.sim label{{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--dim);flex-wrap:wrap}}
+.sim input,.sim select{{width:auto;background:var(--bg2);border:1px solid var(--line);
+  border-radius:7px;color:var(--ink);padding:5px 8px;font:13px var(--mono)}}
+.sim input:focus,.sim select:focus{{outline:0;border-color:var(--go-line)}}
+.simout{{font-size:15px;margin:10px 0 0}}
 .tape{{display:flex;gap:20px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);
   border-radius:12px;padding:13px 16px;margin:13px 0;color:var(--dim);font-size:13px}}
 .tape b{{color:var(--ink);font-family:var(--mono);font-size:16px;font-weight:600;margin-right:3px}}

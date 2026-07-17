@@ -63,6 +63,8 @@ def _page(search_q=None) -> bytes:
             "promises": promises.open_promises(ocon), "captures": ops.captures_open(ocon),
             "replies": inbox.open_replies(ocon),
             "missed_calls": int(ops.kv_get(ocon, "missed_calls", "0") or 0),
+            "spend_total": ops.spend_total(ocon), "spend_entries": ops.spend_entries(ocon),
+            "roi": ops.roi_rows(ocon),
         }
         search_ctx = None
         if search_q is not None:
@@ -189,6 +191,11 @@ class Handler(BaseHTTPRequestHandler):
                 if amt:
                     ops.log_cash(ocon, amt, form.get("venture", "other")[:40],
                                  form.get("what", "")[:200])
+            elif do == "spend":
+                amt = _money(form.get("amount"))
+                if amt:
+                    ops.log_spend(ocon, amt, form.get("venture", "other")[:40],
+                                  form.get("what", "")[:200])
             elif do == "lead_add":
                 name = form.get("name", "").strip()[:80]
                 if name:

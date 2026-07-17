@@ -30,7 +30,7 @@ opsroom sync && opsroom dash
 
 **🏢 VENTURES — every project, with a brief.** Click any venture: an ordered **DO NEXT** list generated from live pipeline state ("UNBLOCK FIRST: …" when your notes say something's blocking), a **DONE** timeline auto-pulled from your decisions log, live numbers, and every researched target as a searchable click-to-open card — pain hypothesis, decision-makers, phones linked.
 
-**💰 MONEY — the goal math.** Collected vs goal, days left, needed per day. Cash counts only when collected, not quoted.
+**💰 MONEY — a real P&L, not a vanity meter.** Collected vs goal, days left, needed per day — plus a **spend ledger** (money out), **net**, and per-venture in/out/net so you see where the money actually comes from. A client-side **path-to-goal simulator** with knobs built from your own ventures answers "what combination of closes gets me there" without anything leaving the page. Cash counts only when collected, not quoted.
 
 **⌕ SEARCH — one box over everything.** Type once in the live console and hit sessions, commits, decisions, leads, touches, and your inbox in the same result list. Full-text search over the activity ledger, literal match over the operator ledgers, all local.
 
