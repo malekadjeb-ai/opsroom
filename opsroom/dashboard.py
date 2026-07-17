@@ -161,12 +161,83 @@ def _queues(st):
     return send, call
 
 
-def render(st, drift, loops, sessions, agents=None):
+def _f(token, fields: dict, label: str, cls: str = "btn small", confirm: str = "") -> str:
+    """One inline POST /act form. All values are server-generated or numeric ids."""
+    hidden = "".join(f"<input type='hidden' name='{esc(str(k))}' value='{esc(str(v))}'>"
+                     for k, v in fields.items())
+    onsub = f" onsubmit=\"return confirm('{esc(confirm)}')\"" if confirm else ""
+    return (f"<form class='inline' method='post' action='/act'{onsub}>"
+            f"<input type='hidden' name='token' value='{esc(token)}'>{hidden}"
+            f"<button class='{cls}'>{esc(label)}</button></form>")
+
+
+def _serve_now_block(sx) -> str:
+    """DUE TODAY (the cadence engine) + today's tape + quick log bar."""
+    tok = sx["token"]
+    tape = sx["tape"]
+    tape_html = (f"<div class='tape'><b>{tape['touches']}</b> touches · "
+                 f"<b>{tape['calls']}</b> calls · <b>{tape['sends']}</b> sends · "
+                 f"<b>${int(tape['cash']):,}</b> collected today</div>")
+    due_rows = "".join(
+        f"<tr><td><b>{esc(r['target'])}</b><br><small>{esc(r['venture'] or '')} · "
+        f"{esc(r['note'] or '')} · due {esc(r['due'])}</small></td><td class='acts'>"
+        + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done")
+        + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
+        + _f(tok, {"do": "followup", "fid": r["id"], "op": "drop"}, "drop", "btn small gray")
+        + "</td></tr>" for r in sx["due"])
+    due_html = (f"<div class='card action'><div class='cardhead'>"
+                f"<h3>⏰ DUE — {len(sx['due'])} follow-ups</h3></div><table>{due_rows}</table></div>"
+                if sx["due"] else "")
+    vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
+                    for k, v in ventures.VENTURES.items() if k != "unknown")
+    quick = f"""<div class="card"><div class="cardhead"><h3>✍️ LOG IT — every touch schedules its day-3 follow-up</h3></div>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="touch">
+<select name="venture">{vopts}</select>
+<input name="target" placeholder="who (company / person)" required>
+<select name="kind"><option>call</option><option>email</option><option>text</option><option>dm</option><option>meeting</option></select>
+<input name="note" placeholder="note (optional)">
+<button class="btn small">log touch</button></form>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="cash">
+<input name="amount" placeholder="$ collected" required inputmode="decimal">
+<select name="venture">{vopts}</select>
+<input name="what" placeholder="for what">
+<button class="btn small">💰 record cash</button></form>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="lead_add">
+<input name="name" placeholder="new lead — name" required>
+<input name="phone" placeholder="phone">
+<input name="service" placeholder="service">
+<button class="btn small">+ lead</button></form></div>"""
+    lead_rows = "".join(
+        f"<tr><td><b>{esc(r['name'])}</b><br><small>{_linkify(esc(r['phone'] or ''))} · "
+        f"{esc(r['service'] or '')} · {esc(r['status'])}"
+        f"{' · quoted $' + format(int(r['quoted']), ',') if r['quoted'] else ''}</small></td>"
+        f"<td class='acts'>"
+        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called"}, "☎ called")
+        + f"""<form class='inline' method='post' action='/act'>
+<input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
+<input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='collected'>
+<input name='amount' placeholder='$' class='amt' inputmode='decimal'>
+<button class='btn small'>collected</button></form>"""
+        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "lost"}, "lost", "btn small gray")
+        + "</td></tr>" for r in sx["leads"][:20])
+    leads_html = (f"<div class='card'><div class='cardhead'>"
+                  f"<h3>📇 LEADS — {len(sx['leads'])} open (oldest touch first)</h3></div>"
+                  f"<table>{lead_rows}</table></div>" if sx["leads"] else "")
+    return tape_html + due_html + quick + leads_html
+
+
+def render(st, drift, loops, sessions, agents=None, serve_ctx=None):
     links = config.load()["links"]
     today = datetime.now().astimezone().date()
     days = st["days_to_goal"]
     goal = st["goal_usd"]
     cash = st["cash_usd"] or 0
+    if serve_ctx:
+        # served mode: the append-only cash ledger is the source of truth
+        cash = int(serve_ctx["cash_total"] or 0)
     cash_pct = min(100, round(100 * cash / goal)) if goal else 0
     send, call = _queues(st)
     n_actions = len(send) + len(call) + (1 if st["leads_n"] else 0)
@@ -230,7 +301,10 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
                       "your pipeline trackers (TOUCH LOG tables) and dashboard note — run "
                       "<b>opsroom init</b> to wire yours up, or <b>opsroom demo</b> to see a loaded "
                       "console.</p></div>")
-    now_tab = ribbon + leak + hero + send_html + call_html + leads_html + empty_hint + (
+    serve_now = _serve_now_block(serve_ctx) if serve_ctx else ""
+    if serve_ctx and (serve_ctx["due"] or serve_ctx["leads"]):
+        empty_hint = ""
+    now_tab = ribbon + leak + hero + serve_now + send_html + call_html + leads_html + empty_hint + (
         f"<p>{stale}</p>" if stale else "")
 
     # ---------- VENTURES ----------
@@ -279,6 +353,22 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
 </div>{band}
 <p class="hint">Cash counts only when <b>collected</b> — not quoted, not booked. Update the
 Live-state table in your dashboard note; opsroom reads it on every refresh.</p></div>"""
+        if serve_ctx:
+            entry_rows = "".join(
+                f"<tr><td>{esc(e['ts'][:10])}</td><td><b>${int(e['amount']):,}</b></td>"
+                f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
+                for e in serve_ctx["cash_entries"])
+            tok = serve_ctx["token"]
+            vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
+                            for k, v in ventures.VENTURES.items() if k != "unknown")
+            money_tab += f"""<div class="card"><div class="cardhead"><h3>🧾 Cash ledger (append-only — this drives the bar)</h3></div>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="cash">
+<input name="amount" placeholder="$ amount" required inputmode="decimal">
+<select name="venture">{vopts}</select>
+<input name="what" placeholder="for what">
+<button class="btn small">record</button></form>
+<table>{entry_rows or '<tr><td class="hint">nothing collected yet — the first entry moves the bar</td></tr>'}</table></div>"""
     else:
         money_tab = ("<div class='card'><h3>No goal configured</h3><p class='hint'>Set "
                      "[goal] amount + deadline in config.toml (or run <b>opsroom init</b>) and the "
@@ -295,7 +385,10 @@ Live-state table in your dashboard note; opsroom reads it on every refresh.</p><
     loop_rows = "".join(
         f"<div class='loop'>"
         f"<b>[{l['age_days']}d · {esc(l['signal'] or '')}] {esc(l['venture'] or '')} · {esc(l['project'] or '')}</b>"
-        f"<div>{esc(l['description'] or '')}</div><small>{esc((l['evidence'] or '')[:160])}</small></div>"
+        f"<div>{esc(l['description'] or '')}</div><small>{esc((l['evidence'] or '')[:160])}</small>"
+        + (_f(serve_ctx["token"], {"do": "loop", "lid": l["id"]}, "dismiss", "btn small gray")
+           if serve_ctx else "")
+        + "</div>"
         for l in loops)
     sess_rows = "".join(
         f"<tr><td>{esc(s['started_at'][:16])}</td><td>{esc(s['venture'] or '')}</td>"
@@ -390,6 +483,18 @@ details.trap summary{{font-weight:700;color:var(--amber)}}
 small{{color:var(--dim)}}
 .warn{{color:var(--amber)}}
 footer{{color:var(--dim);font-size:12px;text-align:center;margin-top:24px}}
+form.inline{{display:inline-block;margin:2px 3px 0 0}}
+form.row{{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}}
+form.row input,form.row select{{background:#101014;border:1px solid var(--line);border-radius:7px;
+color:#fff;padding:8px 10px;font-size:14px;flex:1;min-width:110px}}
+form.row select{{flex:0 1 150px}}
+button.btn{{border:0;cursor:pointer;font:700 13px -apple-system,system-ui,sans-serif}}
+.btn.gray{{background:#2a2c35;color:var(--txt)}}
+td.acts{{text-align:right;white-space:nowrap}}
+input.amt{{width:70px;background:#101014;border:1px solid var(--line);border-radius:7px;
+color:#fff;padding:5px 8px;font-size:13px}}
+.tape{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;
+margin:12px 0;color:var(--dim)}} .tape b{{color:#fff}}
 </style></head><body>
 <header><h1>⚡ Operator Console · {today.isoformat()}</h1>{head_stats}
 <nav>
@@ -406,8 +511,14 @@ footer{{color:var(--dim);font-size:12px;text-align:center;margin-top:24px}}
 {details_pages}
 </main>
 <footer>generated {esc(datetime.now(timezone.utc).isoformat()[:16])}Z · {esc(src)} ·
-refresh: <b>opsroom dash</b> · local file, nothing loads from the network</footer>
+{"live console — writes are instant, page follows" if serve_ctx else
+ "refresh: <b>opsroom dash</b> · local file, nothing loads from the network"}</footer>
 <script>
+{f'''var REV = "{serve_ctx['rev']}";
+setInterval(function() {{
+  fetch('/version', {{cache: 'no-store'}}).then(function(r) {{ return r.text(); }})
+    .then(function(v) {{ if (v !== REV) location.reload(); }}).catch(function() {{}});
+}}, 5000);''' if serve_ctx else ''}
 function route(){{
   var h = location.hash.slice(1) || 'now';
   var found = false;

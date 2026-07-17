@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """opsroom — a local-first operator console. Read-only on all sources.
-Commands: init · sync · sitrep · dash · today · week · loops · drift · venture · search ·
-daily · demo · purge · status"""
+Commands: serve · init · sync · sitrep · dash · today · week · loops · drift · venture ·
+search · daily · demo · purge · status"""
 import argparse
 import sys
 import time
@@ -102,7 +102,7 @@ def cmd_status(args):
 
 def main():
     p = argparse.ArgumentParser(prog="opsroom", description=__doc__)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")  # no subcommand → `opsroom serve` (the app)
     ip = sub.add_parser("init", help="interactive setup: ventures, goal, notes, trackers")
     ip.add_argument("--yes", action="store_true", help="accept detected defaults, no prompts")
     sp = sub.add_parser("sync", help="ingest all sources (read-only on sources)")
@@ -112,6 +112,10 @@ def main():
     st.add_argument("--write", action="store_true", help="append to the daily note (default: print only)")
     sub.add_parser("dash", help="operator console (single local HTML file)").add_argument(
         "--no-open", action="store_true")
+    vp2 = sub.add_parser("serve", help="the console as a live local app: buttons write back "
+                                       "(touches, follow-ups, cash, leads). Loopback only.")
+    vp2.add_argument("--port", type=int, default=7337)
+    vp2.add_argument("--no-open", action="store_true")
     sub.add_parser("today", help="what did I actually do today").add_argument(
         "--offset", type=int, default=0, help="days back")
     sub.add_parser("week", help="7-day activity + drift")
@@ -131,12 +135,18 @@ def main():
     sub.add_parser("status", help="config + watermarks + row counts per source")
     args = p.parse_args()
 
+    if args.cmd is None:  # bare `opsroom` = the live console
+        from . import serve as _serve
+        return _serve.serve() or 0
     if args.cmd == "init":
         from . import setup
         return setup.run(yes=args.yes)
     if args.cmd == "demo":
         from . import demo
         return demo.run()
+    if args.cmd == "serve":
+        from . import serve as _serve
+        return _serve.serve(port=args.port, open_browser=not args.no_open) or 0
     if args.cmd == "sync":
         return cmd_sync(args)
     if args.cmd == "purge":
