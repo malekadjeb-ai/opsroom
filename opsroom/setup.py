@@ -72,7 +72,9 @@ def run(yes=False):
         vblocks += (f'\n[[venture]]\nkey = "{v["key"]}"\nlabel = "{v["label"]}"\n'
                     f'revenue = "{"$0 build" if v["trap"] else "revenue"}"\n'
                     f'trap = {str(v["trap"]).lower()}{track}\n'
-                    f'path_needles = ["{v["key"]}"]\nkeywords = ["{v["key"]}"]\n')
+                    f'path_needles = ["{v["key"]}"]\nkeywords = ["{v["key"]}"]\n'
+                    f'# offer = "one sentence + your canon price — quoted verbatim by the reply drafter"\n'
+                    f'# draft_style = "b2b"   # or "service" (book a day, not a call)\n')
     config.write_template(
         cfg_path, owner="you", amount=amount or 0, deadline=deadline,
         label=label or "", scan_roots=str(roots).replace("'", '"'),

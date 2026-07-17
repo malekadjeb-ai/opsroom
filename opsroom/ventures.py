@@ -34,6 +34,8 @@ def refresh(force: bool = True):
             "target_table": v.get("target_table", ""),
             "playbook": list(v.get("playbook", [])),
             "live_prefix": v.get("live_prefix", ""),
+            "offer": str(v.get("offer", "")),
+            "draft_style": v.get("draft_style", "b2b"),
         }
         for needle in v.get("path_needles", [key]):
             PATH_MAP.append((needle.lower(), key))
@@ -41,7 +43,8 @@ def refresh(force: bool = True):
             TEXT_KEYWORDS.append((kw.lower(), key))
     VENTURES["unknown"] = {"label": "Unattributed", "revenue": "?", "trap": False,
                            "track": None, "files": [], "target_table": "",
-                           "playbook": [], "live_prefix": ""}
+                           "playbook": [], "live_prefix": "", "offer": "",
+                           "draft_style": "b2b"}
     SCAN_ROOTS = [str(Path(p).expanduser()) for p in cfg["paths"]["scan_roots"]]
     NOTES_ROOTS = [(str(Path(p).expanduser()), Path(p).expanduser().name)
                    for p in cfg["paths"]["notes_roots"]]

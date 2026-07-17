@@ -111,6 +111,15 @@ def main():
         r = urllib.request.urlopen(base + "/search?q=", timeout=5)
         assert r.status == 200 and b"0 hits" in r.read()
 
+        # reply drafter: page renders; inbound text is escaped, never executed
+        r = urllib.request.urlopen(base + "/draft", timeout=5)
+        assert r.status == 200 and b"REPLY DRAFTER" in r.read()
+        q = urllib.parse.urlencode({"venture": "demo", "name": "Sam",
+                                    "msg": "interested <script>alert(1)</script>"})
+        page = urllib.request.urlopen(base + f"/draft?{q}", timeout=5).read()
+        assert b"<script>alert(1)</script>" not in page, "draft echo unescaped"
+        assert b"Hi Sam," in page, "draft not generated"
+
         # unknown action + oversized body rejected
         code, _ = post(base + "/act", {"do": "nuke", "token": serve.TOKEN})
         assert code == 400

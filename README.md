@@ -34,6 +34,8 @@ opsroom sync && opsroom dash
 
 **⌕ SEARCH — one box over everything.** Type once in the live console and hit sessions, commits, decisions, leads, touches, and your inbox in the same result list. Full-text search over the activity ledger, literal match over the operator ledgers, all local.
 
+**✍ DRAFT — the reply, written for you, on your rails.** Paste an inbound message and get a rails-correct draft built from the one-line `offer` you set per venture in config. Deterministic and local — no LLM call, and the drafter never quotes a number from the inbound message, only your canon prices. Edit, copy, log the send in one tap (which schedules the day-3 follow-up).
+
 **📊 ACTIVITY — where your time actually went, by agent.** A **BY AGENT** table (Claude vs Codex vs ChatGPT: sessions, active hours, top venture), sessions per venture, commits, and the two features that hurt (in a good way):
 
 ![opsroom ACTIVITY — by agent, drift, open loops](https://raw.githubusercontent.com/malekadjeb-ai/opsroom/main/docs/launch/console-activity.png)

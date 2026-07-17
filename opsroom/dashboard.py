@@ -5,6 +5,7 @@ deliberate — they turn data into one-tap actions. All notes/pipeline-derived t
 html-escaped."""
 import html
 import re
+import urllib.parse
 from datetime import datetime, timezone
 
 from . import config, ventures
@@ -204,7 +205,8 @@ def _serve_now_block(sx) -> str:
                 if sx["due"] else "")
     vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
                     for k, v in ventures.VENTURES.items() if k != "unknown")
-    quick = f"""<div class="card"><div class="cardhead"><h3>✍️ LOG IT — every touch schedules its day-3 follow-up</h3></div>
+    quick = f"""<div class="card"><div class="cardhead"><h3>✍️ LOG IT — every touch schedules its day-3 follow-up</h3>
+<a class="btn small gray" href="/draft">✍ draft a reply</a></div>
 <form class="row" method="post" action="/act">
 <input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="touch">
 <select name="venture">{vopts}</select>
@@ -239,6 +241,7 @@ def _serve_now_block(sx) -> str:
         f"{esc(r['service'] or '')} · {esc(r['status'])}"
         f"{' · quoted $' + format(int(r['quoted']), ',') if r['quoted'] else ''}</small></td>"
         f"<td class='acts'>"
+        f"<a class='btn small gray' href='{esc(draft_url('', r['name']))}'>✍</a>"
         + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called"}, "☎ called")
         + f"""<form class='inline' method='post' action='/act'>
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
@@ -251,6 +254,83 @@ def _serve_now_block(sx) -> str:
                   f"<h3>📇 LEADS — {len(sx['leads'])} open (oldest touch first)</h3></div>"
                   f"<table>{lead_rows}</table></div>" if sx["leads"] else "")
     return prom_html + due_html + tape_html + quick + cap_html + leads_html
+
+
+def draft_url(venture: str, name: str = "", msg: str = "") -> str:
+    q = urllib.parse.urlencode({"venture": venture or "", "name": name or "",
+                                "msg": (msg or "")[:1500]})
+    return f"/draft?{q}"
+
+
+DRAFT_CSS = """
+:root{--bg:#0a0b0d;--surface:#14161a;--line:#24272e;--ink:#eceef1;--dim:#9aa1ac;
+  --faint:#6c727d;--go:#3ddc84;--go-dim:rgba(61,220,132,.13);--go-line:rgba(61,220,132,.32);
+  --cool:#59c1f0;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}
+body{font:15px/1.55 var(--sans);color:var(--ink);background:var(--bg);margin:0;padding:18px}
+main{max-width:760px;margin:0 auto}
+h1{font:800 15px/1 var(--sans);letter-spacing:.14em;margin:0 0 4px}
+h1 .bolt{color:var(--go)}
+a{color:var(--cool);text-decoration:none}a:hover{text-decoration:underline}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:15px 16px;margin:13px 0}
+label{display:block;font:600 11px var(--mono);letter-spacing:.06em;color:var(--faint);
+  text-transform:uppercase;margin:10px 0 4px}
+input,select,textarea{width:100%;background:#0d0f12;border:1px solid var(--line);
+  border-radius:8px;color:var(--ink);padding:9px 11px;font:14px var(--sans)}
+textarea{font-family:var(--sans);min-height:96px;resize:vertical}
+textarea#out{min-height:150px;border-color:var(--go-line);font-size:15px}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--go-line)}
+.btn{display:inline-block;background:var(--go);color:#052012;font-weight:700;border:0;
+  cursor:pointer;padding:9px 15px;border-radius:8px;margin-top:10px;font:700 14px var(--sans)}
+.btn.gray{background:#191c22;color:var(--dim);border:1px solid var(--line)}
+.hint{color:var(--dim);font-size:13px;max-width:64ch}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+"""
+
+
+def draft_page(token, venture="", msg="", name="", draft=None):
+    """The /draft page: paste an inbound message, get a rails-correct reply from
+    your config (offer + draft_style), copy it, log the send in one tap."""
+    vopts = "".join(
+        f"<option value='{esc(k)}'{' selected' if k == venture else ''}>{esc(v['label'])}</option>"
+        for k, v in ventures.VENTURES.items() if k != "unknown")
+    result = ""
+    if draft is not None:
+        log_form = f"""<form method="post" action="/act">
+<input type="hidden" name="token" value="{esc(token)}">
+<input type="hidden" name="do" value="touch"><input type="hidden" name="venture" value="{esc(venture)}">
+<input type="hidden" name="kind" value="email"><input type="hidden" name="note" value="sent drafted reply">
+<div class="row"><input name="target" value="{esc(name)}" placeholder="who (required to log it)" required>
+<button class="btn">✓ sent — log it + schedule the day-3 follow-up</button></div></form>"""
+        result = f"""<div class="card">
+<label>your draft — edit freely, then copy</label>
+<textarea id="out">{esc(draft)}</textarea>
+<button class="btn gray" onclick="cp()" id="cpbtn">⧉ copy draft</button>
+{log_form}
+<p class="hint">Rails: the only numbers in a draft are the ones in your config offer —
+nothing is ever quoted from the inbound message. One CTA per draft.</p></div>
+<script>
+function cp(){{var t=document.getElementById('out');t.select();
+  try{{navigator.clipboard.writeText(t.value)}}catch(e){{document.execCommand('copy')}}
+  var b=document.getElementById('cpbtn');b.textContent='✓ copied';
+  setTimeout(function(){{b.textContent='⧉ copy draft'}},1200);}}
+</script>"""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DRAFT · opsroom</title><style>{DRAFT_CSS}</style></head><body><main>
+<a href="/">← back to the console</a>
+<h1 style="margin-top:10px"><span class="bolt">✍</span> REPLY DRAFTER</h1>
+<p class="hint">Paste what they sent you. The draft comes from YOUR rails — the
+offer line and style you set per venture in config.toml. Deterministic, local, no AI call.</p>
+<div class="card"><form method="get" action="/draft">
+<label>venture</label><select name="venture">{vopts}</select>
+<label>their name (optional)</label><input name="name" value="{esc(name)}" placeholder="first name">
+<label>their message</label><textarea name="msg" placeholder="paste the inbound text / email / DM…">{esc(msg)}</textarea>
+<button class="btn">draft the reply →</button></form></div>
+{result}
+</main></body></html>"""
 
 
 def _search_panel(sx):

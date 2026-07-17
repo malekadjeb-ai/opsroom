@@ -3,6 +3,7 @@
 GET  /          live console, rebuilt from sources + ledgers per request
 GET  /version   change counter (page polls this and reloads itself after any write)
 GET  /search    one query across activity (FTS) + leads/touches/inbox ledgers
+GET  /draft     reply drafter: inbound message -> rails-correct draft from config
 POST /act       every button: touch / followup / cash / lead_add / lead_touch / loop
 
 Security posture (this thing accepts writes, so it's built paranoid):
@@ -128,6 +129,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, _page(search_q=q))
             except Exception as e:
                 self._send(500, f"<pre>search failed:\n{type(e).__name__}: {e}</pre>".encode())
+        elif url.path == "/draft":
+            from . import dashboard, drafts
+            qs = urllib.parse.parse_qs(url.query)
+            venture = (qs.get("venture") or [""])[0][:40]
+            msg = (qs.get("msg") or [""])[0][:1500]
+            name = (qs.get("name") or [""])[0][:80]
+            try:
+                draft = drafts.draft_reply(venture, msg, name) if msg else None
+                self._send(200, dashboard.draft_page(TOKEN, venture, msg, name, draft).encode())
+            except Exception as e:
+                self._send(500, f"<pre>draft failed:\n{type(e).__name__}: {e}</pre>".encode())
         elif url.path == "/context":
             con = db.connect()
             ocon = ops.connect()
