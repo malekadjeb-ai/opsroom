@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """opsroom — a local-first operator console. Read-only on all sources.
 Commands: serve · init · sync · sitrep · dash · today · week · loops · drift · venture ·
-search · daily · demo · purge · status"""
+search · leads-import · replies-import · daily · demo · purge · status"""
 import argparse
 import sys
 import time
@@ -137,6 +137,12 @@ def main():
     sub.add_parser("search", help="full-text search the ledger").add_argument("query", nargs="+")
     vp = sub.add_parser("daily", help="append-only activity ledger into the daily note")
     vp.add_argument("--write", action="store_true")
+    li = sub.add_parser("leads-import", help="merge a leads JSON drop into the register "
+                                             "(dedup by phone; see inbox.py for the shape)")
+    li.add_argument("path", nargs="?", help="drop file (default: <data>/inbox/leads.json)")
+    ri = sub.add_parser("replies-import", help="merge a replies JSON drop; new replies "
+                                               "schedule a call-today follow-up")
+    ri.add_argument("path", nargs="?", help="drop file (default: <data>/inbox/replies.json)")
     sub.add_parser("demo", help="spin up a fictional portfolio and open the console")
     pp = sub.add_parser("purge", help="shrink the blast radius")
     pp.add_argument("--source")
@@ -166,6 +172,23 @@ def main():
         return cmd_purge(args)
     if args.cmd == "status":
         return cmd_status(args)
+    if args.cmd in ("leads-import", "replies-import"):
+        from pathlib import Path
+
+        from . import inbox, ops
+        ocon = ops.connect()
+        try:
+            path = Path(args.path).expanduser() if args.path else None
+            imp = inbox.import_leads if args.cmd == "leads-import" else inbox.import_replies
+            r = imp(ocon, path)
+        finally:
+            ocon.close()
+        if r.get("error"):
+            print(f"import failed: {r['error']}")
+            return 1
+        extra = f" · missed calls noted: {r['missed_calls']}" if r.get("missed_calls") else ""
+        print(f"{args.cmd}: {r['added']} added, {r['skipped']} already known{extra}")
+        return 0
 
     con = db.connect()
     try:

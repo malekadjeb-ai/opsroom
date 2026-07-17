@@ -40,6 +40,8 @@ DEFAULTS = {
         "pipeline_dir": "",          # markdown trackers with Totals / TOUCH LOG tables — optional
         "daily_dir": "",             # where `sitrep --write` appends; default <data>/daily
         "chat_drop_dir": "",         # manual chat-export drop dir
+        "leads_drop": "",            # leads JSON drop file (default <data>/inbox/leads.json)
+        "replies_drop": "",          # replies JSON drop file (default <data>/inbox/replies.json)
     },
     "links": {
         "mail_drafts": "",           # e.g. https://mail.google.com/mail/u/0/#drafts

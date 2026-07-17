@@ -21,7 +21,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import contextpack, db, enrich, ops, promises, state, views
+from . import contextpack, db, enrich, inbox, ops, promises, state, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -61,6 +61,8 @@ def _page(search_q=None) -> bytes:
             "leads": ops.leads_open(ocon), "tape": ops.today_tape(ocon),
             "touches": ops.touches_recent(ocon, 12),
             "promises": promises.open_promises(ocon), "captures": ops.captures_open(ocon),
+            "replies": inbox.open_replies(ocon),
+            "missed_calls": int(ops.kv_get(ocon, "missed_calls", "0") or 0),
         }
         search_ctx = None
         if search_q is not None:
@@ -209,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
                 ops.capture_set(ocon, int(form["cid"]), form.get("op", "file"))
             elif do == "promise":
                 promises.promise_set(ocon, form.get("pid", "")[:24], form.get("op", "done"))
+            elif do == "reply":
+                inbox.reply_set(ocon, form.get("rid", "")[:24], form.get("op", "handled"))
             else:
                 self._send(400, b"unknown action")
                 return
@@ -249,6 +253,7 @@ def _sync_loop():
             con.close()
             oc = ops.connect()
             promises.scan(oc)
+            inbox.watch_tick(oc)  # re-import lead/reply drops on file change
             oc.close()
             _bump()
         except Exception:

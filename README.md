@@ -36,6 +36,8 @@ opsroom sync && opsroom dash
 
 **✍ DRAFT — the reply, written for you, on your rails.** Paste an inbound message and get a rails-correct draft built from the one-line `offer` you set per venture in config. Deterministic and local — no LLM call, and the drafter never quotes a number from the inbound message, only your canon prices. Edit, copy, log the send in one tap (which schedules the day-3 follow-up).
 
+**🔥 REPLIED + LEADS — the hot list, fed by anything.** Drop a small JSON file (from an AI agent session reading your mail, a CRM export, a webhook you pipe to disk) and opsroom merges it: new leads dedup by phone into the register, and a reply from someone you pitched hits the top of NOW as a call-these-first block with a one-tap drafted answer. Replies schedule the call for **today**, not the day-3 cadence — a live reply is the hottest thing on the board. The drop file is the boundary: opsroom itself never touches the network.
+
 **📊 ACTIVITY — where your time actually went, by agent.** A **BY AGENT** table (Claude vs Codex vs ChatGPT: sessions, active hours, top venture), sessions per venture, commits, and the two features that hurt (in a good way):
 
 ![opsroom ACTIVITY — by agent, drift, open loops](https://raw.githubusercontent.com/malekadjeb-ai/opsroom/main/docs/launch/console-activity.png)

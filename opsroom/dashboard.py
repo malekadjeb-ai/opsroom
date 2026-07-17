@@ -180,6 +180,31 @@ def _serve_now_block(sx) -> str:
     tape_html = (f"<div class='tape'><b>{tape['touches']}</b> touches · "
                  f"<b>{tape['calls']}</b> calls · <b>{tape['sends']}</b> sends · "
                  f"<b>${int(tape['cash']):,}</b> collected today</div>")
+    # REPLIED — a live reply is the hottest thing on the board; call these first
+    reply_rows = ""
+    for r in sx.get("replies", []):
+        who = r["from_name"] or r["from_email"] or r["target"] or "?"
+        link = (f" <a href='{esc(r['link'])}' target='_blank'>open ↗</a>"
+                if r["link"] else "")
+        snip = f"<div><small>“{esc((r['snippet'] or '')[:180])}”</small></div>" if r["snippet"] else ""
+        reply_rows += (
+            f"<tr><td><b>{esc(who)}</b> <span class='loop-meta'>{esc(r['venture'] or '')}"
+            f" · {esc((r['reply_date'] or '')[:10])}</span>"
+            f"<div><small>{esc(r['subject'] or '')}</small>{link}</div>{snip}</td>"
+            f"<td class='acts'>"
+            f"<a class='btn small' href='{esc(draft_url(r['venture'] or '', who, r['snippet'] or ''))}'>✍ draft</a>"
+            + _f(tok, {"do": "reply", "rid": r["id"], "op": "handled"}, "✓ handled", "btn small gray")
+            + _f(tok, {"do": "reply", "rid": r["id"], "op": "dismiss"}, "dismiss", "btn small gray")
+            + "</td></tr>")
+    replies_html = (f"<div class='card action'><div class='cardhead'>"
+                    f"<h3>🔥 REPLIED — {len(sx.get('replies', []))} to answer, call these first</h3></div>"
+                    f"<p class='hint'>A live reply is the hottest thing on the board — it's already "
+                    f"on the tape; your next punch is the call (or the drafted reply).</p>"
+                    f"<table>{reply_rows}</table></div>" if sx.get("replies") else "")
+    missed_html = ""
+    if sx.get("missed_calls"):
+        missed_html = (f"<div class='banner bad'>☎ {sx['missed_calls']} missed calls in the last "
+                       f"lead drop — numberless notifications; only your lead source shows who called.</div>")
     # PROMISES — what an agent staged and is still waiting on you
     prom_rows = "".join(
         f"<tr><td><b>{esc(p['venture'] or '?')}</b> "
@@ -253,7 +278,7 @@ def _serve_now_block(sx) -> str:
     leads_html = (f"<div class='card'><div class='cardhead'>"
                   f"<h3>📇 LEADS — {len(sx['leads'])} open (oldest touch first)</h3></div>"
                   f"<table>{lead_rows}</table></div>" if sx["leads"] else "")
-    return prom_html + due_html + tape_html + quick + cap_html + leads_html
+    return replies_html + missed_html + prom_html + due_html + tape_html + quick + cap_html + leads_html
 
 
 def draft_url(venture: str, name: str = "", msg: str = "") -> str:
