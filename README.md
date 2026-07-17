@@ -16,7 +16,7 @@ One console for **every AI coding agent you run** — Claude Code, OpenAI Codex 
 No cloud. No accounts. No dependencies. One Python package, one SQLite file on your disk, one HTML file as your console.
 
 ```
-pipx install git+https://github.com/malekadjeb-ai/opsroom   # or: uv tool install git+https://github.com/malekadjeb-ai/opsroom
+pipx install opsroom-console   # or: pip install opsroom-console / uv tool install opsroom-console
 opsroom demo             # see a fully loaded console in 10 seconds (fictional data)
 opsroom init             # wire up YOUR repos, goal, and notes
 opsroom sync && opsroom dash

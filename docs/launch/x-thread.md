@@ -43,7 +43,7 @@ branches. Orphaned tasks. It all stays on the board until closed.
 
 **Tweet 5 (CTA):**
 
-pipx install git+https://github.com/malekadjeb-ai/opsroom
+pipx install opsroom-console
 opsroom demo   ← fully loaded fictional console in 10 seconds
 
 Stdlib-only Python, MIT, fail-closed secret redaction, zero network egress.

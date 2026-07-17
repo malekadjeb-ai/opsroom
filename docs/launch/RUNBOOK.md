@@ -6,9 +6,19 @@ Pacific**. Block 4–6 hours after — you must answer comments fast, that's the
 
 ## Already done (no action needed)
 - [x] Code pushed, repo public, v0.3.0 tagged + released, CI green on public repo
-- [x] `pipx install git+https://github.com/malekadjeb-ai/opsroom` verified on a clean venv
+- [x] `opsroom-console` package built + `twine check` passed; installs clean and provides
+      the `opsroom` command (verified in a fresh venv from the local wheel)
 - [x] Social preview card uploaded, topics set, demo GIF + screenshots in README
 - [x] 2 secret-scanning alerts (fake test fixtures) dismissed as used-in-tests
+
+## One pending step before launch (needs YOUR PyPI account)
+- [ ] Upload to PyPI so `pip install opsroom-console` works for the world:
+      1. Create/confirm a PyPI account at https://pypi.org and make an API token
+         (Account settings → API tokens → scope: "Entire account" for the first upload).
+      2. From `~/code/opsroom`: `python -m twine upload dist/*`
+         (username `__token__`, password = the `pypi-…` token).
+      3. Verify: `pipx install opsroom-console && opsroom demo` on a clean machine.
+      Until this is done, the install commands in the README/posts won't resolve.
 
 ## T-0: the posts (in this order, ~30 min apart)
 
