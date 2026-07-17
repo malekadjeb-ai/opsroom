@@ -47,6 +47,10 @@ DEFAULTS = {
         "mail_drafts": "",           # e.g. https://mail.google.com/mail/u/0/#drafts
         "leads": "",                 # e.g. your leads dashboard URL
     },
+    "agent": {
+        "enabled": False,            # opt-in: let the console launch your agent CLI
+        "command": ["claude", "-p"],  # argv prefix; the brief is appended as ONE argument
+    },
     "ventures": [],                  # list of tables: key,label,revenue,track,trap,
                                      #   path_needles,keywords,files,target_table,playbook
 }
@@ -64,7 +68,7 @@ def load(force: bool = False) -> dict:
         except (OSError, tomllib.TOMLDecodeError) as e:
             print(f"opsroom: bad config at {path}: {e} — using defaults")
             raw = {}
-        for k in ("goal", "paths", "links"):
+        for k in ("goal", "paths", "links", "agent"):
             cfg[k].update(raw.get(k, {}))
         cfg["ventures"] = raw.get("venture", raw.get("ventures", []))
     if not cfg["paths"]["scan_roots"]:

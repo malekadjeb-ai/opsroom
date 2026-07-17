@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 # PyPI distribution name (the plain "opsroom" was taken). The import package and the
 # CLI command are both still `opsroom` — `pip install opsroom-console` gives you `opsroom`.
 name = "opsroom-console"
-version = "0.5.0"
+version = "0.6.0"
 description = "Local-first operator console: fuses your AI agent sessions (Claude Code, Codex CLI, ChatGPT), git repos, and markdown notes into one dashboard that tells you what to do next."
 readme = "README.md"
 requires-python = ">=3.11"

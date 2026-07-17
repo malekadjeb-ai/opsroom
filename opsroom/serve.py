@@ -4,6 +4,7 @@ GET  /          live console, rebuilt from sources + ledgers per request
 GET  /version   change counter (page polls this and reloads itself after any write)
 GET  /search    one query across activity (FTS) + leads/touches/inbox ledgers
 GET  /draft     reply drafter: inbound message -> rails-correct draft from config
+GET  /do        the do-it brief for an action (task + rails + live context)
 POST /act       every button: touch / followup / cash / lead_add / lead_touch / loop
 
 Security posture (this thing accepts writes, so it's built paranoid):
@@ -144,6 +145,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, dashboard.draft_page(TOKEN, venture, msg, name, draft).encode())
             except Exception as e:
                 self._send(500, f"<pre>draft failed:\n{type(e).__name__}: {e}</pre>".encode())
+        elif url.path == "/do":
+            from . import dashboard, dispatch
+            qs = urllib.parse.parse_qs(url.query)
+            task = (qs.get("task") or [""])[0][:300]
+            venture = (qs.get("venture") or [""])[0][:40]
+            try:
+                brief = dispatch.build_brief(task, venture) if task else ""
+                self._send(200, dashboard.do_page(
+                    TOKEN, task, venture, brief, dispatch.agent_ready(),
+                    history=dispatch.recent()).encode())
+            except Exception as e:
+                self._send(500, f"<pre>brief failed:\n{type(e).__name__}: {e}</pre>".encode())
         elif url.path == "/context":
             con = db.connect()
             ocon = ops.connect()
@@ -220,6 +233,20 @@ class Handler(BaseHTTPRequestHandler):
                 promises.promise_set(ocon, form.get("pid", "")[:24], form.get("op", "done"))
             elif do == "reply":
                 inbox.reply_set(ocon, form.get("rid", "")[:24], form.get("op", "handled"))
+            elif do == "dispatch":
+                from . import dashboard, dispatch
+                task = form.get("task", "").strip()[:300]
+                venture = form.get("venture", "")[:40]
+                if not task:
+                    self._send(400, b"no task")
+                    return
+                result = dispatch.dispatch(task, venture)
+                _bump()
+                self._send(200, dashboard.do_page(
+                    TOKEN, task, venture, dispatch.build_brief(task, venture),
+                    dispatch.agent_ready(), result=result,
+                    history=dispatch.recent()).encode())
+                return
             else:
                 self._send(400, b"unknown action")
                 return

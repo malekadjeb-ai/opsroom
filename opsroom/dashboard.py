@@ -102,12 +102,14 @@ def _targets_block(key, st):
 <div id="{lid}">{items}</div></div>"""
 
 
-def _venture_detail(v, st, today):
+def _venture_detail(v, st, today, live=False):
     key = v["key"]
     meta = ventures.VENTURES.get(key, {})
     nxt = st["next"].get(key, [])
     next_items = "".join(
-        f"<li class='{'first' if i == 0 else ''}'>{_linkify(esc(a))}</li>"
+        f"<li class='{'first' if i == 0 else ''}'>{_linkify(esc(a))}"
+        + (f" <a class='doit' href='{esc(do_url(a, key))}'>▶ do it</a>" if live else "")
+        + "</li>"
         for i, a in enumerate(nxt))
     hist = st["history"].get(key, [])[:6]
     done_items = "".join(
@@ -210,6 +212,7 @@ def _serve_now_block(sx) -> str:
         f"<tr><td><b>{esc(p['venture'] or '?')}</b> "
         f"<span class='loop-meta'>{esc((p['ts'] or '')[:10])}</span>"
         f"<div>{esc(p['text'])}</div></td><td class='acts'>"
+        + f"<a class='btn small gray' href='{esc(do_url(p['text'], p['venture'] or ''))}'>▶</a>"
         + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓ done")
         + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "dismiss", "btn small gray")
         + "</td></tr>" for p in sx["promises"])
@@ -218,13 +221,17 @@ def _serve_now_block(sx) -> str:
                  f"<p class='hint'>Lines an agent staged and parked on your go — money dies in "
                  f"scrollback. Cleared when you act.</p><table>{prom_rows}</table></div>"
                  if sx["promises"] else "")
-    due_rows = "".join(
-        f"<tr><td><b>{esc(r['target'])}</b><br><small>{esc(r['venture'] or '')} · "
-        f"{esc(r['note'] or '')} · due {esc(r['due'])}</small></td><td class='acts'>"
-        + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done")
-        + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
-        + _f(tok, {"do": "followup", "fid": r["id"], "op": "drop"}, "drop", "btn small gray")
-        + "</td></tr>" for r in sx["due"])
+    due_rows = ""
+    for r in sx["due"]:
+        task = f"Follow up with {r['target']}" + (f" — {r['note']}" if r["note"] else "")
+        due_rows += (
+            f"<tr><td><b>{esc(r['target'])}</b><br><small>{esc(r['venture'] or '')} · "
+            f"{esc(r['note'] or '')} · due {esc(r['due'])}</small></td><td class='acts'>"
+            f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or ''))}'>▶</a>"
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done")
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "drop"}, "drop", "btn small gray")
+            + "</td></tr>")
     due_html = (f"<div class='card action'><div class='cardhead'>"
                 f"<h3>⏰ DUE — {len(sx['due'])} follow-ups</h3></div><table>{due_rows}</table></div>"
                 if sx["due"] else "")
@@ -358,6 +365,63 @@ offer line and style you set per venture in config.toml. Deterministic, local, n
 </main></body></html>"""
 
 
+def do_url(task: str, venture: str = "") -> str:
+    q = urllib.parse.urlencode({"task": (task or "")[:300], "venture": venture or ""})
+    return f"/do?{q}"
+
+
+def do_page(token, task, venture, brief, agent_on, result=None, history=None):
+    """The /do page: the work brief (task + rails + live context), copy it into any
+    agent, or one-tap dispatch to your configured local agent CLI."""
+    if result and result.get("launched"):
+        banner = (f"<div class='card' style='border-color:var(--go-line)'>"
+                  f"<b style='color:var(--go)'>🤖 dispatched.</b> Your agent is running it "
+                  f"detached — output logs to <code>{esc(result['log'])}</code>.</div>")
+    elif result:
+        banner = (f"<div class='card'><b>Brief written</b> to <code>{esc(result['brief'])}</code> "
+                  f"— agent launch is disabled. Enable it in config.toml:<br>"
+                  f"<code>[agent]</code><br><code>enabled = true</code><br>"
+                  f"<code>command = [\"claude\", \"-p\"]</code></div>")
+    else:
+        banner = ""
+    send_btn = f"""<form method="post" action="/act" style="display:inline">
+<input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="do" value="dispatch">
+<input type="hidden" name="task" value="{esc(task)}"><input type="hidden" name="venture" value="{esc(venture)}">
+<button class="btn">{'🤖 send to your agent — runs it now' if agent_on else '🤖 write the brief file (agent launch disabled)'}</button></form>"""
+    hist_rows = "".join(
+        f"<tr><td>{esc(h['ts'])}</td><td>{esc(h['task'][:90])}</td>"
+        f"<td>{esc(h['log'] or '—')}</td></tr>" for h in (history or []))
+    hist = (f"<div class='card'><label>recent dispatches</label>"
+            f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{hist_rows}</table></div>"
+            if hist_rows else "")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DO IT · opsroom</title><style>{DRAFT_CSS}
+table td{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;color:var(--dim)}}
+</style></head><body><main>
+<a href="/">← back to the console</a>
+<h1 style="margin-top:10px"><span class="bolt">▶</span> DO IT</h1>
+<p class="hint">The full hand-off brief for this action: the task, your rails, and the live
+operator context. Copy it into any AI chat — or dispatch it straight to your local agent CLI.</p>
+{banner}
+<div class="card">
+<label>the task</label>
+<div style="font-size:16px;margin:2px 0 8px"><b>{esc(task) or '—'}</b></div>
+<label>the brief — copy into any agent</label>
+<textarea id="out" style="min-height:220px">{esc(brief)}</textarea>
+<button class="btn gray" onclick="cp()" id="cpbtn">⧉ copy brief</button>
+{send_btn}
+</div>
+{hist}
+<script>
+function cp(){{var t=document.getElementById('out');t.select();
+  try{{navigator.clipboard.writeText(t.value)}}catch(e){{document.execCommand('copy')}}
+  var b=document.getElementById('cpbtn');b.textContent='✓ copied';
+  setTimeout(function(){{b.textContent='⧉ copy brief'}},1200);}}
+</script>
+</main></body></html>"""
+
+
 def _search_panel(sx):
     """Console-wide search results: one query across the activity ledger (FTS) and
     the operator ledgers (leads, touches, inbox). All hit text is escaped."""
@@ -470,8 +534,13 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
         ribbon = f"<div class='banner bad'>⚠ notes unreadable ({esc(st['degraded'][0])}) — {esc(note)}</div>"
     leak = (f"<div class='banner bad'>TOP LEAK: {esc(st['top_leak'])}</div>"
             if st["top_leak"] != "none detected" else "")
+    hero_btns = ""
+    if serve_ctx and st.get("one_move"):
+        hero_btns = (f"<p style='margin:10px 0 0'>"
+                     f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it — open the brief</a>"
+                     f"</p>")
     hero = f"""<div class="hero"><small>SINGLE HIGHEST CASH ACTION</small>
-<p>{esc(st['one_move'] or '—')}</p></div>"""
+<p>{esc(st['one_move'] or '—')}</p>{hero_btns}</div>"""
     send_rows = "".join(
         f"<tr><td><b>{esc(r['target'])}</b></td><td>{esc(r['channel'])}</td>"
         f"<td><span class='pill ok'>{esc(r['status'])}</span></td><td>{_linkify(esc(r['next']))}</td></tr>"
@@ -520,7 +589,7 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
     # ---------- VENTURES ----------
     rev_cards, trap_rows, trap_min, details_pages = "", "", 0, ""
     for v in st["ventures"]:
-        details_pages += _venture_detail(v, st, today)
+        details_pages += _venture_detail(v, st, today, live=bool(serve_ctx))
         first_next = (st["next"].get(v["key"]) or ["—"])[0]
         if v["trap"]:
             trap_min += v["week_min"]
@@ -803,6 +872,9 @@ small{{color:var(--dim)}} .warn{{color:var(--warn)}}
 ol.next{{margin:10px 0 2px;padding-left:20px;counter-reset:n}} ol.next li{{margin:8px 0;padding-left:4px}}
 ol.next li::marker{{color:var(--faint);font-family:var(--mono);font-size:12px}}
 ol.next li.first{{color:var(--ink);font-weight:650}}
+a.doit{{font:600 11px var(--mono);color:var(--go);border:1px solid var(--go-line);
+  border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap;vertical-align:1px}}
+a.doit:hover{{background:var(--go-dim);text-decoration:none}}
 .hitem{{display:grid;grid-template-columns:88px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}}
 .hitem:last-child{{border-bottom:0}}
 .hitem b{{color:var(--go);font:600 12px/1.5 var(--mono)}}
