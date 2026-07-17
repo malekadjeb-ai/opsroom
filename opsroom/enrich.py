@@ -41,17 +41,20 @@ def _active_minutes(ts_list) -> float:
     return round(max(total, 1.0), 1)
 
 
+AGENT_SOURCES = ("cli", "codex")  # sources whose events aggregate into sessions rows
+
+
 def build_sessions(con) -> int:
-    """Aggregate cli events into sessions rows. Idempotent (full rebuild of aggregates)."""
-    rows = con.execute("""
-        SELECT session_id,
+    """Aggregate agent CLI events into sessions rows. Idempotent (full rebuild of aggregates)."""
+    rows = con.execute(f"""
+        SELECT source, session_id,
                MIN(ts) AS started_at, MAX(ts) AS ended_at,
                SUM(CASE WHEN kind='prompt' AND is_sidechain=0 THEN 1 ELSE 0 END) AS prompts,
                SUM(CASE WHEN kind IN ('tool_call','file_edit') THEN 1 ELSE 0 END) AS tools,
                SUM(CASE WHEN kind='file_edit' THEN 1 ELSE 0 END) AS edits,
                MAX(project) AS project
-        FROM events WHERE source='cli' AND session_id IS NOT NULL
-        GROUP BY session_id""").fetchall()
+        FROM events WHERE source IN ({','.join('?' * len(AGENT_SOURCES))}) AND session_id IS NOT NULL
+        GROUP BY source, session_id""", AGENT_SOURCES).fetchall()
     n = 0
     for r in rows:
         try:
@@ -75,7 +78,7 @@ def build_sessions(con) -> int:
                AND venture=? AND ts BETWEEN ? AND ?""",
             (venture, r["ended_at"],
              _iso(end + timedelta(hours=2)))).fetchone()["c"]
-        outcome = _classify_outcome(con, r, end, commits_after)
+        outcome = _classify_outcome(con, r, end, commits_after, r["source"])
         con.execute("""
             INSERT INTO sessions (id, source, started_at, ended_at, duration_min, venture, project,
                                   prompt_count, tool_calls, files_touched, commits_after, outcome, summary)
@@ -86,22 +89,22 @@ def build_sessions(con) -> int:
               prompt_count=excluded.prompt_count, tool_calls=excluded.tool_calls,
               files_touched=excluded.files_touched, commits_after=excluded.commits_after,
               outcome=excluded.outcome, summary=excluded.summary""",
-            (r["session_id"], "cli", r["started_at"], r["ended_at"], dur, venture,
+            (r["session_id"], r["source"], r["started_at"], r["ended_at"], dur, venture,
              r["project"], r["prompts"], r["tools"], r["edits"], commits_after, outcome,
              first_prompt["summary"] if first_prompt else None))
         n += 1
     return n
 
 
-def _classify_outcome(con, r, end, commits_after) -> str:
+def _classify_outcome(con, r, end, commits_after, source="cli") -> str:
     if commits_after > 0:
         return "shipped"
     age_h = (_now() - end).total_seconds() / 3600
     if age_h < 48:
         return "ongoing"
     later = con.execute(
-        "SELECT 1 FROM events WHERE source='cli' AND project=? AND session_id!=? AND ts>? LIMIT 1",
-        (r["project"], r["session_id"], r["ended_at"])).fetchone()
+        "SELECT 1 FROM events WHERE source=? AND project=? AND session_id!=? AND ts>? LIMIT 1",
+        (source, r["project"], r["session_id"], r["ended_at"])).fetchone()
     if later:
         return "unknown"
     last = con.execute(
@@ -211,7 +214,7 @@ def detect_loops(con, git_result: dict, vault_result: dict) -> dict:
                      description=f"Note '{nt['name']}' in-progress but untouched {nt['age_d']}d",
                      evidence=nt["path"], confidence=0.6, fired=fired)
     # planted TODOs are ingested incrementally; verify open ones are still in HEAD
-    from collectors import git as c_git
+    from .collectors import git as c_git
     for row in con.execute(
             "SELECT id, description, evidence FROM loops WHERE status='open' AND signal='planted_todo'").fetchall():
         repo = (row["evidence"] or "").split("@")[0]
@@ -235,6 +238,41 @@ def detect_loops(con, git_result: dict, vault_result: dict) -> dict:
             closed += 1
     open_n = con.execute("SELECT COUNT(*) c FROM loops WHERE status='open'").fetchone()["c"]
     return {"open": open_n, "closed_this_run": closed}
+
+
+# ---------------------------------------------------------------- agents
+
+AGENT_LABELS = {"cli": "claude", "codex": "codex"}
+
+
+def by_agent(con, days: int = 7) -> list:
+    """Per-agent activity: CLI agents from sessions, chat agents from chat events."""
+    since = _iso(_now() - timedelta(days=days))
+    out = []
+    for r in con.execute("""
+            SELECT source, COUNT(*) n, COALESCE(SUM(duration_min),0) m, MAX(ended_at) last
+            FROM sessions WHERE started_at >= ? GROUP BY source""", (since,)):
+        top = con.execute("""
+            SELECT venture, SUM(duration_min) m FROM sessions
+            WHERE source=? AND started_at >= ? AND venture != 'unknown'
+            GROUP BY venture ORDER BY m DESC LIMIT 1""", (r["source"], since)).fetchone()
+        out.append({"agent": AGENT_LABELS.get(r["source"], r["source"]),
+                    "sessions": r["n"], "minutes": r["m"] or 0, "unit": "time",
+                    "top_venture": top["venture"] if top else "-",
+                    "last_seen": (r["last"] or "")[:16]})
+    for r in con.execute("""
+            SELECT actor, COUNT(DISTINCT session_id) n, COUNT(*) msgs, MAX(ts) last
+            FROM events WHERE source='chat' AND actor IN ('assistant','chatgpt') AND ts >= ?
+            GROUP BY actor""", (since,)):
+        top = con.execute("""
+            SELECT venture, COUNT(*) c FROM events
+            WHERE source='chat' AND actor=? AND ts >= ? AND venture != 'unknown'
+            GROUP BY venture ORDER BY c DESC LIMIT 1""", (r["actor"], since)).fetchone()
+        out.append({"agent": "claude (web)" if r["actor"] == "assistant" else "chatgpt",
+                    "sessions": r["n"], "minutes": r["msgs"], "unit": "msgs",
+                    "top_venture": top["venture"] if top else "-",
+                    "last_seen": (r["last"] or "")[:16]})
+    return sorted(out, key=lambda a: -a["minutes"] if a["unit"] == "time" else 0)
 
 
 # ---------------------------------------------------------------- drift

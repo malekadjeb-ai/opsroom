@@ -155,12 +155,12 @@ def run():
     db.DB_PATH = db.DB_DIR / "activity.db"
     con = db.connect()
 
-    def sess(i, venture, hours_ago, mins, outcome, summary):
+    def sess(i, venture, hours_ago, mins, outcome, summary, source="cli"):
         start = now - timedelta(hours=hours_ago)
         con.execute("""INSERT OR REPLACE INTO sessions
             (id, source, started_at, ended_at, duration_min, venture, outcome, summary)
             VALUES (?,?,?,?,?,?,?,?)""",
-            (f"demo-{i}", "cli", start.isoformat(), (start + timedelta(minutes=mins)).isoformat(),
+            (f"demo-{i}", source, start.isoformat(), (start + timedelta(minutes=mins)).isoformat(),
              mins, venture, outcome, summary))
 
     sess(1, "meridian", 3, 85, "shipped", "Drafted Cobalt + Harbor & Pine openers")
@@ -169,6 +169,18 @@ def run():
     sess(4, "detailpro", 8, 25, "shipped", "Called 3 stale quote requests, 1 booked")
     sess(5, "blog-engine", 50, 190, "wip", "Rewrote the templating layer again")
     sess(6, "sideproject-x", 75, 120, "wip", "Prototype #4 of the recommender")
+    sess(7, "shopkit", 12, 45, "shipped", "Codex: fixed the Stripe webhook retry bug", "codex")
+    sess(8, "blog-engine", 55, 140, "wip", "Codex: markdown parser rewrite, round 2", "codex")
+    for i, (hrs, actor, kind, text) in enumerate([
+            (20, "you", "prompt", "Pricing strategy: is $49/mo leaving money on the table for Shopkit?"),
+            (20, "chatgpt", "response", "Given 41 licenses and flat churn, test a $79 pro tier before touching base pricing…"),
+            (44, "you", "prompt", "Rewrite the Brightline proposal executive summary, punchier"),
+            (44, "chatgpt", "response", "Draft: 'Brightline loses ~$210K/yr to no-shows. This proposal removes 60% of that…'")]):
+        con.execute("""INSERT OR REPLACE INTO events
+            (id, ts, source, session_id, venture, kind, actor, summary)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (f"demo-chat{i}", (now - timedelta(hours=hrs, minutes=i)).isoformat(), "chat",
+             f"chatgpt:demo-{hrs}", "shopkit" if hrs == 20 else "meridian", kind, actor, text))
     for i, (v, s) in enumerate([("meridian", "add case-study outline"),
                                 ("shopkit", "v2.3: bulk export + tax"),
                                 ("blog-engine", "wip: new templating layer")]):

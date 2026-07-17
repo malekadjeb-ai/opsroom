@@ -23,11 +23,12 @@ def today(con, offset=0):
         """SELECT * FROM sessions WHERE ended_at >= ? AND started_at < ?
            ORDER BY started_at""", (start, end)).fetchall()
     if not sessions:
-        print("  no CLI sessions recorded")
+        print("  no agent sessions recorded")
     for s in sessions:
         mins = int(s["duration_min"] or 0)
-        print(f"  {s['started_at'][11:16]}  [{s['venture']:<13}] {mins:>4}m  "
-              f"{s['outcome'] or '?':<9} {(s['summary'] or '(no prompt)')[:70]}")
+        agent = enrich.AGENT_LABELS.get(s["source"], s["source"])
+        print(f"  {s['started_at'][11:16]}  {agent:<7} [{s['venture']:<13}] {mins:>4}m  "
+              f"{s['outcome'] or '?':<9} {(s['summary'] or '(no prompt)')[:64]}")
     commits = con.execute(
         """SELECT ts, venture, summary FROM events WHERE kind='commit' AND ts >= ? AND ts < ?
            ORDER BY ts""", (start, end)).fetchall()
@@ -56,8 +57,25 @@ def week(con):
         h, m = divmod(int(r["m"]), 60)
         print(f"  {start}  {r['n']:>3} sessions  {h:>2}h {m:02d}m  {c:>3} commits  "
               f"{_bar(min(100, r['m'] / 6), 20)}")
-    print()
+    by_agent(con)
     drift(con)
+
+
+def by_agent(con):
+    agents = enrich.by_agent(con)
+    if not agents:
+        print()
+        return
+    print("\n  BY AGENT (7d)")
+    for a in agents:
+        if a["unit"] == "time":
+            h, m = divmod(int(a["minutes"]), 60)
+            vol = f"{h:>2}h {m:02d}m"
+        else:
+            vol = f"{int(a['minutes']):>3} msgs"
+        print(f"  {a['agent']:<13} {a['sessions']:>3} sessions  {vol:>8}  "
+              f"top: {a['top_venture']:<13} last {a['last_seen']}")
+    print()
 
 
 def loops(con, show_all=False):
@@ -211,8 +229,9 @@ def dash(con, out_path=None):
     lps = con.execute("""SELECT * FROM loops WHERE status='open'
                          ORDER BY confidence*age_days DESC LIMIT 30""").fetchall()
     sess = con.execute("SELECT * FROM sessions ORDER BY started_at DESC LIMIT 25").fetchall()
+    agents = enrich.by_agent(con)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(dashboard.render(st, d, lps, sess))
+    out.write_text(dashboard.render(st, d, lps, sess, agents))
     out.chmod(0o600)  # may carry notes-derived text; same posture as the DB
     print(f"console written: {out}")
     return str(out)

@@ -161,7 +161,7 @@ def _queues(st):
     return send, call
 
 
-def render(st, drift, loops, sessions):
+def render(st, drift, loops, sessions, agents=None):
     links = config.load()["links"]
     today = datetime.now().astimezone().date()
     days = st["days_to_goal"]
@@ -301,7 +301,16 @@ Live-state table in your dashboard note; opsroom reads it on every refresh.</p><
         f"<tr><td>{esc(s['started_at'][:16])}</td><td>{esc(s['venture'] or '')}</td>"
         f"<td>{int(s['duration_min'] or 0)}m</td><td>{esc((s['summary'] or '')[:80])}</td></tr>"
         for s in sessions)
+    agent_rows = "".join(
+        f"<tr><td><b>{esc(a['agent'])}</b></td><td>{a['sessions']}</td>"
+        f"<td>{_hm(a['minutes']) if a['unit'] == 'time' else str(int(a['minutes'])) + ' msgs'}</td>"
+        f"<td>{esc(a['top_venture'])}</td><td>{esc(a['last_seen'])}</td></tr>"
+        for a in (agents or []))
+    agent_block = (f"<h3>By agent · last 7 days</h3><table>"
+                   f"<tr><th>agent</th><th>sessions</th><th>volume</th><th>top venture</th><th>last seen</th></tr>"
+                   f"{agent_rows}</table>") if agent_rows else ""
     activity_tab = f"""{alert}
+{agent_block}
 <h3>Effort vs revenue · week of {esc(drift['week_of'])}</h3><table>{drift_rows or '<tr><td>no sessions yet — opsroom sync</td></tr>'}</table>
 <h3>Open loops ({len(loops)})</h3>{loop_rows or '<p>none</p>'}
 <details><summary>Recent sessions ({len(sessions)})</summary><table>{sess_rows}</table></details>"""
