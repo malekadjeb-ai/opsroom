@@ -10,3 +10,5 @@ state.json
 console.html
 daily/
 .venv/
+.impeccable/
+.claude/
