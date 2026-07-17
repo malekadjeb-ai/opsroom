@@ -1,0 +1,32 @@
+name: Bug report
+description: Something broke
+labels: [bug]
+body:
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS + Python version
+      placeholder: macOS 15.5 / Python 3.12
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: opsroom sync
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Output or traceback. Please reproduce against `opsroom demo` data or a synthetic fixture — don't paste real session logs or notes.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: false

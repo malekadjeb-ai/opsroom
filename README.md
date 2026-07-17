@@ -113,8 +113,10 @@ Built during a 23-day cash sprint by an operator running eight ventures, out of 
 
 ```
 git clone https://github.com/malekadjeb-ai/opsroom && cd opsroom
-for t in tests/test_*.py; do python "$t" || break; done   # five gates, all must print green
-python -m opsroom.cli demo
+for t in tests/test_*.py; do python3 "$t" || break; done   # seven gates, all must exit 0
+python3 -m opsroom.cli demo
 ```
 
 Stdlib only — there is nothing to `pip install` for development. MIT license.
+
+Want to add a collector for your agent (Gemini CLI, Cursor, Aider, ...)? It's a ~100-line file — see [CONTRIBUTING.md](CONTRIBUTING.md) for the recipe and the open [good first issues](https://github.com/malekadjeb-ai/opsroom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).

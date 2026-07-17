@@ -1,0 +1,29 @@
+name: New collector request
+description: Ask for (or offer to build) support for another AI agent or data source
+labels: [collector, enhancement]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Tool / agent
+      placeholder: Gemini CLI, Cursor, Aider, OpenCode, ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Where its local logs live and what they look like
+      description: Path (e.g. `~/.gemini/sessions/`), format (JSONL? SQLite?), and a small REDACTED sample if you have one.
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Are you up for building it?
+      description: Collectors are ~100-line files with one `collect(con)` entry point — see CONTRIBUTING.md for the recipe. We merge these fast.
+      options:
+        - "Yes — point me at the template"
+        - "Maybe, with guidance"
+        - "No, just requesting"
+    validations:
+      required: true

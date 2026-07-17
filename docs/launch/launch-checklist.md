@@ -1,21 +1,19 @@
 # Launch checklist — target: top of GitHub trending (daily)
 
-> **STATUS 2026-07-17:** repo taken PRIVATE by the maintainer's call after a ~10-minute public
-> window (nothing was posted anywhere). Relaunch gate: security audit clean + v0.3
-> serve (write-back app) polished. When relaunching: flip visibility public, verify
-> CI badge renders, then resume at "Launch morning" below. The v0.2.0 release,
-> topics, GIF, and screenshots are already in place.
+> **STATUS 2026-07-17 (current):** repo is PUBLIC. v0.3.0 released on GitHub, CI green,
+> 9 topics set, security audit clean, hero GIF live. Nothing has been posted anywhere yet.
+> Launch scheduled **Tue 2026-07-21, 8:00 AM CT** — resume at "Launch morning" below.
+> Remaining pre-launch items: PyPI upload (maintainer's token), fresh-machine install
+> test, regenerated screenshots from the redesigned console, social-preview upload check.
 
 Reality check on the number: #1 daily overall needs roughly 400-800 stars in 24h;
 #1 in Python needs roughly 150-300. That volume comes from HN front page + Reddit +
 X landing the same morning. The repo just has to not fumble the traffic.
 
-## Gate 0 — the maintainer's call (the only open decision)
+## Gate 0 — the maintainer's call (RESOLVED)
 
-- [ ] Launch on v0.2.0 (multi-agent, read-only console) — OR hold for the v0.3
-      write-back port from private cc. The "it must feel like a tool" bar is yours.
-      Note: the demo + sitrep + BY AGENT already *do* things (send queues, tap-to-dial,
-      one-move); this is not the bare dashboard you rejected.
+- [x] Decided: launch on **v0.3.0** (write-back console — serve, cash ledger, leads,
+      follow-up cadence). The "it must feel like a tool" bar is met.
 
 ## T-2 days
 

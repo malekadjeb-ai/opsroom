@@ -1,0 +1,22 @@
+name: Feature request
+description: Something opsroom should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you see or do today? Concrete beats abstract.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should the console/CLI show or do?
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        House rules that shape what gets accepted: zero dependencies, zero network egress, read-only on sources, local-first. Features that need a cloud service or a new pip package won't land.
