@@ -33,7 +33,7 @@ Security posture, since it reads terminal history: fail-closed secret redaction
 before anything touches the DB, zero network egress, 600-perm SQLite that refuses
 to live in a cloud-sync folder, read-only on every source.
 
-`pipx install opsroom && opsroom demo` gives you a fully loaded fictional console
+`pipx install git+https://github.com/malekadjeb-ai/opsroom && opsroom demo` gives you a fully loaded fictional console
 in ten seconds.
 
 Happy to answer anything about parsing the agents' log formats — Codex's rollout

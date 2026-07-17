@@ -24,7 +24,7 @@ X landing the same morning. The repo just has to not fumble the traffic.
 - [ ] Tag v0.2.0, create a GitHub Release with the demo GIF embedded.
 - [ ] Publish to PyPI (`pipx install opsroom` in the README must actually work):
       `python -m build && twine upload dist/*`.
-- [ ] Fresh-machine test: `pipx install opsroom && opsroom demo` on a clean user account.
+- [ ] Fresh-machine test: `pipx install git+https://github.com/malekadjeb-ai/opsroom && opsroom demo` on a clean user account.
 
 ## Launch morning (Tue/Wed/Thu, 6:00-8:00 AM Pacific)
 

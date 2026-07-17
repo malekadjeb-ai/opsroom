@@ -17,7 +17,7 @@ It also ingests Codex CLI logs and ChatGPT exports, so if you run multiple agent
 you get a BY AGENT comparison table.
 
 Local-only (SQLite, no network egress, fail-closed secret redaction since it reads
-terminal history). `pipx install opsroom && opsroom demo` shows a fictional loaded
+terminal history). `pipx install git+https://github.com/malekadjeb-ai/opsroom && opsroom demo` shows a fictional loaded
 console in ten seconds. MIT, stdlib-only.
 
 GitHub: https://github.com/malekadjeb-ai/opsroom
@@ -35,7 +35,7 @@ actually went — by project, by agent, with the money question attached: did an
 this ship revenue?
 
 Everything local: one SQLite file, no cloud, no accounts, aggressive secret
-redaction before anything is stored. `pipx install opsroom && opsroom demo`.
+redaction before anything is stored. `pipx install git+https://github.com/malekadjeb-ai/opsroom && opsroom demo`.
 
 GitHub: https://github.com/malekadjeb-ai/opsroom
 
@@ -48,8 +48,9 @@ GitHub: https://github.com/malekadjeb-ai/opsroom
 The r/LocalLLaMA angle: this thing never touches the network. All parsing is local,
 the DB is a 600-perm SQLite file that refuses to live in a cloud-sync folder, the
 rendered HTML loads zero external resources, and every event passes a fail-closed
-secret redactor before it's written. Stdlib-only Python, so `pipx install opsroom`
-is the entire supply chain.
+secret redactor before it's written. Stdlib-only Python installed straight from the
+repo (`pipx install git+https://github.com/malekadjeb-ai/opsroom`) — you can read the
+entire supply chain in an afternoon.
 
 It reads Claude Code and Codex CLI session logs, ChatGPT/Claude exports, git, and
 markdown notes; shows per-agent activity, abandoned work ("open loops"), and

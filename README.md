@@ -5,9 +5,9 @@
 ![deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-<!-- LAUNCH: insert demo GIF here — vhs docs/launch/demo.tape -->
-
 **Your AI agents write code all day. opsroom shows you whether any of it pays.**
+
+![opsroom demo — sitrep, by-agent, trap-zone alert](docs/launch/demo.gif)
 
 One console for **every AI coding agent you run** — Claude Code, OpenAI Codex CLI, ChatGPT, Claude web — plus your **git repos** and your **markdown notes** (Obsidian or plain folders), fused into one local dashboard that answers the only question that matters:
 
@@ -16,7 +16,7 @@ One console for **every AI coding agent you run** — Claude Code, OpenAI Codex 
 No cloud. No accounts. No dependencies. One Python package, one SQLite file on your disk, one HTML file as your console.
 
 ```
-pipx install opsroom     # or: pip install opsroom / uv tool install opsroom
+pipx install git+https://github.com/malekadjeb-ai/opsroom   # or: uv tool install git+https://github.com/malekadjeb-ai/opsroom
 opsroom demo             # see a fully loaded console in 10 seconds (fictional data)
 opsroom init             # wire up YOUR repos, goal, and notes
 opsroom sync && opsroom dash
@@ -26,11 +26,15 @@ opsroom sync && opsroom dash
 
 **🎯 NOW — an action queue, not a report.** Drafts staged in your outreach tracker become a send list with an open-your-drafts button. Phone-first targets become tap-to-dial links. Stale leads become a rescue block. The single highest cash action sits on top, pulled from your own dashboard note.
 
+![opsroom console — the NOW action queue](docs/launch/console-now.png)
+
 **🏢 VENTURES — every project, with a brief.** Click any venture: an ordered **DO NEXT** list generated from live pipeline state ("UNBLOCK FIRST: …" when your notes say something's blocking), a **DONE** timeline auto-pulled from your decisions log, live numbers, and every researched target as a searchable click-to-open card — pain hypothesis, decision-makers, phones linked.
 
 **💰 MONEY — the goal math.** Collected vs goal, days left, needed per day. Cash counts only when collected, not quoted.
 
 **📊 ACTIVITY — where your time actually went, by agent.** A **BY AGENT** table (Claude vs Codex vs ChatGPT: sessions, active hours, top venture), sessions per venture, commits, and the two features that hurt (in a good way):
+
+![opsroom ACTIVITY — by agent, drift, open loops](docs/launch/console-activity.png)
 
 - **Trap-zone drift**: time spent in $0-revenue builds vs revenue ventures, with a red alert when building beats selling this week. The engineer's trap, made visible.
 - **Open loops**: things you started and silently dropped — plan language in AI transcripts with no follow-up commit, stale branches, uncommitted work, in-progress notes going stale.
