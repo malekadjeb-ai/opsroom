@@ -302,8 +302,9 @@ def next_actions(state):
                 a.append(f"Tracker '{p['name']}' is all zeros — outreach has not started")
         if state["leads_n"] and key == state.get("leads_venture"):
             pos = 1 if (a and a[0].startswith("UNBLOCK FIRST")) else 0
-            a.insert(pos, f"Call the ~{state['leads_n']} open leads NEWEST FIRST "
-                          f"(aged ~{state['leads_age']}d) — log every touch")
+            aged = f" (aged ~{state['leads_age']}d)" if state.get("leads_age") else ""
+            a.insert(pos, f"Call the ~{state['leads_n']} open leads NEWEST FIRST"
+                          f"{aged} — log every touch")
         a += meta.get("playbook", [])
         acts[key] = a or ["No queued actions — check the tracker or add playbook lines in config"]
     return acts
