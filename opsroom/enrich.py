@@ -221,7 +221,7 @@ def detect_loops(con, git_result: dict, vault_result: dict) -> dict:
         probe = (row["description"] or "").split(": ", 1)[-1][:80]
         if repo and probe:
             try:
-                if c_git._git(repo, "grep", "-F", probe, "HEAD", "--", "."):
+                if c_git._git(repo, "grep", "-F", "-e", probe, "--end-of-options", "HEAD", "--", "."):
                     fired.add(row["id"])
                 # else: line gone from HEAD -> allow auto-close below
             except Exception:

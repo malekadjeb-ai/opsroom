@@ -1,4 +1,8 @@
 """Terminal views + sitrep + operator-console dashboard + daily writeback (append-only)."""
+import os
+import re
+import sqlite3
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -139,11 +143,24 @@ def venture_view(con, name):
     print(f"\n  open loops: {n}  (opsroom loops for detail)\n")
 
 
+def _fts_query(q: str) -> str:
+    """Wrap user words as quoted FTS5 tokens so query punctuation (AND, quotes, parens,
+    apostrophes) is treated as literal text, never as FTS operators that raise."""
+    words = re.findall(r"\w+", q)
+    return " ".join(f'"{w}"' for w in words)
+
+
 def search(con, query):
-    rows = con.execute(
-        """SELECT e.ts, e.venture, e.kind, e.summary, e.raw_ref FROM events_fts f
-           JOIN events e ON e.rowid = f.rowid WHERE events_fts MATCH ?
-           ORDER BY e.ts DESC LIMIT 25""", (query,)).fetchall()
+    fts = _fts_query(query)
+    rows = []
+    if fts:
+        try:
+            rows = con.execute(
+                """SELECT e.ts, e.venture, e.kind, e.summary, e.raw_ref FROM events_fts f
+                   JOIN events e ON e.rowid = f.rowid WHERE events_fts MATCH ?
+                   ORDER BY e.ts DESC LIMIT 25""", (fts,)).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
     print(f"\nSEARCH '{query}' · {len(rows)} hits\n")
     for r in rows:
         print(f"  {r['ts'][:16]}  [{r['venture']:<13}] {r['kind']:<11} {(r['summary'] or '')[:70]}")
@@ -192,6 +209,14 @@ def _source_health(st):
     return "no dashboard note configured — DB-only (opsroom init to add one)"
 
 
+def _chmod_note(target: Path) -> None:
+    """Daily notes can carry ledger-derived text; keep them owner-only like the DB."""
+    try:
+        os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)  # 600
+    except OSError:
+        pass
+
+
 def sitrep(con, write=False):
     st = state.build_state(con)
     lines = _sitrep_lines(st)
@@ -219,6 +244,7 @@ def sitrep(con, write=False):
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "a") as fh:
             fh.write(block)
+        _chmod_note(target)
         print(f"appended SITREP to {target}")
 
 
@@ -253,11 +279,16 @@ def daily_writeback(con, dry_run=True):
         lines.append(f"- {s['venture']}: {s['n']} sessions, {int(s['m'] or 0)}m")
     share = round(100 * d['trap_min'] / d['total_min']) if d['total_min'] else 0
     lines.append(f"- open loops: {open_loops}; trap-zone share this week: {share}%")
-    block = "\n".join(lines) + "\n"
+    try:
+        block, _ = redact.redact(block)
+    except Exception as e:
+        print(f"REDACTION FAILED ({e}) — write dropped, nothing appended")
+        return
     if dry_run:
         print(f"--- would APPEND to {target} ---{block}--- end (append-only, no rewrite) ---")
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "a") as fh:
             fh.write(block)
+        _chmod_note(target)
         print(f"appended ledger to {target}")

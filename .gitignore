@@ -5,5 +5,8 @@ dist/
 build/
 .DS_Store
 activity.db*
+ops.db*
+state.json
 console.html
+daily/
 .venv/

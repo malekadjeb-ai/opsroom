@@ -37,8 +37,11 @@ class Emitter:
             self.dropped += 1
             return
         try:
-            summary, h1 = _redact.redact((summary or "")[:512])
-            detail, h2 = _redact.redact((detail or "")[:MAX_DETAIL])
+            # redact BEFORE truncating: a secret straddling the cut would otherwise be
+            # sliced so the pattern no longer matches, storing its unredacted head.
+            rs, h1 = _redact.redact(summary or "")
+            rd, h2 = _redact.redact(detail or "")
+            summary, detail = rs[:512], rd[:MAX_DETAIL]
             redacted = 1 if (h1 + h2) else 0
         except Exception as e:  # fail closed: never write unredacted content
             self.dropped += 1

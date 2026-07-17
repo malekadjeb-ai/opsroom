@@ -21,8 +21,16 @@ PLANTED = [
     ("slack", "hook xoxb-FAKE1234-FAKE5678-FAKEFAKEFAKE"),
     ("google", "key=AIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE123"),
     ("env line", "STRIPE_WEBHOOK_SECRET=whsec_9kQz7XvB2mNpL4RtYcE8FAKE"),
+    ("lowercase env", "api_key=sk_FAKElowercaseKEY0987654321"),
+    ("password env", "password=P@ssw0rdHunterSeven!!"),
+    ("bearer", "Authorization: Bearer FAKEbearerTOKEN0987654321abcd"),
+    ("sendgrid", "SG.FAKEsendgridAAAAAAAAAA.BBBBBBBBBBsendgridFAKE"),
+    # F1 regression: secret straddling the 4096 detail-truncation boundary
+    ("boundary db uri", "x" * 4066 + "postgres://admin:SuperSecretHunterX@db.internal:5432/prod"),
 ]
-MARKERS = ["FAKEFAKE", "AKIAIOSFODNN7EXAMPLE", "hunter2secret", "whsec_9kQz7XvB2mNpL4RtYcE8"]
+MARKERS = ["FAKEFAKE", "AKIAIOSFODNN7EXAMPLE", "hunter2secret", "whsec_9kQz7XvB2mNpL4RtYcE8",
+           "sk_FAKElowercaseKEY", "P@ssw0rdHunterSeven", "FAKEbearerTOKEN",
+           "sendgridAAAA", "SuperSecretHunterX"]
 
 
 def main():

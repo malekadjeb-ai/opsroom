@@ -104,11 +104,15 @@ def collect(con, dry_run: bool = False) -> dict:
                 cleanup.append(f)
             elif f.suffix == ".zip":
                 with zipfile.ZipFile(f) as z:
-                    for member in z.namelist():
-                        if member.endswith("conversations.json"):
-                            data = json.loads(z.read(member).decode(errors="replace"))
-                            _ingest_any(em, data, f"{f}!{member}")
-                            ingested.append(f"{f.name}!{member}")
+                    for info in z.infolist():
+                        if info.filename.endswith("conversations.json"):
+                            if info.file_size > 500_000_000:  # decompression-bomb cap
+                                print(f"  [chat] skipped {info.filename}: "
+                                      f"{info.file_size // 1_000_000}MB exceeds 500MB cap")
+                                continue
+                            data = json.loads(z.read(info).decode(errors="replace"))
+                            _ingest_any(em, data, f"{f}!{info.filename}")
+                            ingested.append(f"{f.name}!{info.filename}")
                 cleanup.append(f)
         except Exception as e:
             print(f"  [chat] failed on {f.name}: {e}")

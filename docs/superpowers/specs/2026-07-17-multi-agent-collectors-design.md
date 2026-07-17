@@ -74,5 +74,5 @@ paying." Approach A (sibling collectors, flat pattern) approved.
 - Drafts in `docs/launch/`: Show HN post, X thread, Reddit posts
   (r/ClaudeAI, r/OpenAI, r/LocalLLaMA), all landing the same Tue–Thu morning.
 - Version 0.2.0 = multi-agent. The write-back port from private cc becomes 0.3.
-- Open decision (Malek's staged-launch gate): launch on 0.2.0 or wait for the
+- Open decision (the maintainer's staged-launch gate): launch on 0.2.0 or wait for the
   write-back port. The checklist flags it; nothing here blocks on it.

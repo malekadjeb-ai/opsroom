@@ -106,7 +106,8 @@ def _scan_planted_todos(repo: str, shas: list, cap: int = 60) -> list:
     still = []
     for f in found:
         probe = f["line"][:80]
-        if probe and _git(repo, "grep", "-F", probe, "HEAD", "--", ".", timeout=20):
+        if probe and _git(repo, "grep", "-F", "-e", probe, "--end-of-options",
+                          "HEAD", "--", ".", timeout=20):
             still.append(f)
     return still[:20]
 
