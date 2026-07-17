@@ -19,7 +19,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import db, enrich, ops, state, views
+from . import contextpack, db, enrich, ops, promises, state, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -58,6 +58,7 @@ def _page() -> bytes:
             "cash_total": ops.cash_total(ocon), "cash_entries": ops.cash_entries(ocon),
             "leads": ops.leads_open(ocon), "tape": ops.today_tape(ocon),
             "touches": ops.touches_recent(ocon, 12),
+            "promises": promises.open_promises(ocon), "captures": ops.captures_open(ocon),
         }
         return dashboard.render(st, d, lps, sess, agents, serve_ctx=serve_ctx).encode()
     finally:
@@ -113,6 +114,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, f"<pre>render failed:\n{type(e).__name__}: {e}</pre>".encode())
         elif url.path == "/version":
             self._send(200, str(_REV[0]).encode(), "text/plain")
+        elif url.path == "/context":
+            con = db.connect()
+            ocon = ops.connect()
+            try:
+                txt = contextpack.build(con, ocon, state.build_state(con))
+                self._send(200, txt.encode(), "text/plain; charset=utf-8")
+            except Exception as e:
+                self._send(500, f"context pack failed: {type(e).__name__}: {e}".encode(),
+                           "text/plain")
+            finally:
+                con.close()
+                ocon.close()
         else:
             self._send(404, b"not found")
 
@@ -162,6 +175,14 @@ class Handler(BaseHTTPRequestHandler):
                             (form.get("lid", "")[:64],))
                 con.commit()
                 con.close()
+            elif do == "capture":
+                text = form.get("text", "").strip()
+                if text:
+                    ops.capture(ocon, text)
+            elif do == "capture_set":
+                ops.capture_set(ocon, int(form["cid"]), form.get("op", "file"))
+            elif do == "promise":
+                promises.promise_set(ocon, form.get("pid", "")[:24], form.get("op", "done"))
             else:
                 self._send(400, b"unknown action")
                 return
@@ -200,6 +221,9 @@ def _sync_loop():
             con.commit()
             db.enforce_perms()
             con.close()
+            oc = ops.connect()
+            promises.scan(oc)
+            oc.close()
             _bump()
         except Exception:
             pass  # next tick retries; the console keeps serving current state

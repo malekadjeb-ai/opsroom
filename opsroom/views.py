@@ -178,7 +178,7 @@ def _sitrep_lines(st):
         line1 = f"- DATE: {st['date']} (no goal deadline set — opsroom init)"
     cash = st["cash_raw"] or "n/a — no cash row in the dashboard note"
     if st["leads_n"] is not None:
-        leads = f"~{st['leads_n']} aged ~{st['leads_age']}d"
+        leads = f"~{st['leads_n']}" + (f" aged ~{st['leads_age']}d" if st.get("leads_age") else "")
     else:
         leads = "n/a — no leads row in the dashboard note"
     pipe_bits = []

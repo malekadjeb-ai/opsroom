@@ -173,12 +173,25 @@ def _f(token, fields: dict, label: str, cls: str = "btn small", confirm: str = "
 
 
 def _serve_now_block(sx) -> str:
-    """DUE TODAY (the cadence engine) + today's tape + quick log bar."""
+    """Promises (anti-leak) + DUE follow-ups + today's tape + quick log + capture + leads."""
     tok = sx["token"]
     tape = sx["tape"]
     tape_html = (f"<div class='tape'><b>{tape['touches']}</b> touches · "
                  f"<b>{tape['calls']}</b> calls · <b>{tape['sends']}</b> sends · "
                  f"<b>${int(tape['cash']):,}</b> collected today</div>")
+    # PROMISES — what an agent staged and is still waiting on you
+    prom_rows = "".join(
+        f"<tr><td><b>{esc(p['venture'] or '?')}</b> "
+        f"<span class='loop-meta'>{esc((p['ts'] or '')[:10])}</span>"
+        f"<div>{esc(p['text'])}</div></td><td class='acts'>"
+        + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓ done")
+        + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "dismiss", "btn small gray")
+        + "</td></tr>" for p in sx["promises"])
+    prom_html = (f"<div class='card'><div class='cardhead'>"
+                 f"<h3>🔒 PROMISES — {len(sx['promises'])} staged, waiting on you</h3></div>"
+                 f"<p class='hint'>Lines an agent staged and parked on your go — money dies in "
+                 f"scrollback. Cleared when you act.</p><table>{prom_rows}</table></div>"
+                 if sx["promises"] else "")
     due_rows = "".join(
         f"<tr><td><b>{esc(r['target'])}</b><br><small>{esc(r['venture'] or '')} · "
         f"{esc(r['note'] or '')} · due {esc(r['due'])}</small></td><td class='acts'>"
@@ -210,7 +223,17 @@ def _serve_now_block(sx) -> str:
 <input name="name" placeholder="new lead — name" required>
 <input name="phone" placeholder="phone">
 <input name="service" placeholder="service">
-<button class="btn small">+ lead</button></form></div>"""
+<button class="btn small">+ lead</button></form>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="capture">
+<input name="text" placeholder="capture a thought → inbox (file it later)" required>
+<button class="btn small gray">drop it</button></form></div>"""
+    cap_rows = "".join(
+        f"<tr><td>{esc(c['text'])}</td><td class='acts'>"
+        + _f(tok, {"do": "capture_set", "cid": c["id"], "op": "file"}, "filed", "btn small gray")
+        + "</td></tr>" for c in sx["captures"])
+    cap_html = (f"<div class='card'><div class='cardhead'><h3>📥 INBOX — {len(sx['captures'])} captured"
+                f"</h3></div><table>{cap_rows}</table></div>" if sx["captures"] else "")
     lead_rows = "".join(
         f"<tr><td><b>{esc(r['name'])}</b><br><small>{_linkify(esc(r['phone'] or ''))} · "
         f"{esc(r['service'] or '')} · {esc(r['status'])}"
@@ -227,7 +250,7 @@ def _serve_now_block(sx) -> str:
     leads_html = (f"<div class='card'><div class='cardhead'>"
                   f"<h3>📇 LEADS — {len(sx['leads'])} open (oldest touch first)</h3></div>"
                   f"<table>{lead_rows}</table></div>" if sx["leads"] else "")
-    return tape_html + due_html + quick + leads_html
+    return prom_html + due_html + tape_html + quick + cap_html + leads_html
 
 
 def render(st, drift, loops, sessions, agents=None, serve_ctx=None):
@@ -290,8 +313,9 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None):
         leads_btn = (f"<a class='btn' href='{esc(links['leads'])}' target='_blank'>Open leads →</a>"
                      if links.get("leads") else "")
         vlabel = ventures.VENTURES.get(st["leads_venture"], {}).get("label", "")
+        aged = f", aged ~{st['leads_age']}d" if st.get("leads_age") else ""
         leads_html = f"""<div class="card action">
-<div class="cardhead"><h3>🚨 RESCUE — ~{st['leads_n']} open leads, aged ~{st['leads_age']}d</h3>
+<div class="cardhead"><h3>🚨 RESCUE — ~{st['leads_n']} open leads{aged}</h3>
 {leads_btn}</div>
 <p class='hint'>Work newest first: call → no answer → voicemail + text within 60s. Log every touch
 in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} →</a>" if st['leads_venture'] else ''}</p></div>"""
@@ -426,6 +450,8 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
     title_days = f"{days}d left" if days is not None else "opsroom"
     live_dot = "<span class='live'></span>live console — writes land instantly" if serve_ctx else \
         "static snapshot · <b>opsroom dash</b> to rebuild · nothing loads from the network"
+    ctx_btn = ("<a class='ctx' href='/context' target='_blank' title='live operator brief — "
+               "paste into any AI chat'>📋 context pack</a>" if serve_ctx else "")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OPERATOR · {title_days}</title><style>
@@ -464,6 +490,9 @@ header::before{{content:"";position:absolute;inset:0 0 auto;height:1px;
 .brand h1{{font:800 15px/1 var(--sans);letter-spacing:.14em;color:var(--ink);margin:0}}
 .brand .bolt{{color:var(--go)}}
 .brand time{{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.02em}}
+.brand .ctx{{margin-left:auto;font:600 12px var(--mono);color:var(--cool);
+  border:1px solid var(--line);border-radius:7px;padding:5px 10px;background:var(--surface)}}
+.brand .ctx:hover{{border-color:var(--go-line);color:var(--go);text-decoration:none}}
 .hud{{display:flex;gap:10px;flex-wrap:wrap}}
 .hud-cell{{flex:1 1 auto;min-width:92px;display:flex;flex-direction:column;gap:1px;
   padding:7px 12px 8px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}}
@@ -641,7 +670,7 @@ footer b{{color:var(--dim)}}
 }}
 </style></head><body>
 <header>
-  <div class="brand"><h1><span class="bolt">⚡</span> OPERATOR</h1><time>{today.isoformat()}</time></div>
+  <div class="brand"><h1><span class="bolt">⚡</span> OPERATOR</h1><time>{today.isoformat()}</time>{ctx_btn}</div>
   {head_stats}
   <nav>
     <a data-t="now" href="#now">🎯 NOW</a>

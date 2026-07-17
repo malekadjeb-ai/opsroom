@@ -46,6 +46,13 @@ def cmd_sync(args):
         loop_stats = enrich.detect_loops(con, git_result, notes_result)
         con.commit()
         db.enforce_perms()
+        try:
+            from . import ops, promises
+            oc = ops.connect()
+            promises.scan(oc)
+            oc.close()
+        except Exception as e:
+            print(f"  [promises] skipped: {type(e).__name__}: {e}", file=sys.stderr)
     else:
         n_sessions, loop_stats = "-", {"open": "-"}
     dt = time.time() - t0

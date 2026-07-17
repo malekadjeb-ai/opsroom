@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS leads (
   added TEXT NOT NULL, name TEXT NOT NULL, phone TEXT, service TEXT, note TEXT,
   status TEXT DEFAULT 'open', last_touch TEXT, quoted REAL, collected REAL
 );
+CREATE TABLE IF NOT EXISTS captures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL, text TEXT NOT NULL, status TEXT DEFAULT 'open'
+);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 CREATE INDEX IF NOT EXISTS idx_followups_due ON followups(status, due);
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status, added);
@@ -141,6 +145,23 @@ def touch_lead(con, lead_id: int, kind: str, amount=None, note: str = "") -> Non
                     (_now(), lead_id))
         con.execute("INSERT INTO touches (ts, venture, target, kind, note) VALUES (?,?,?,?,?)",
                     (_now(), "leads", row["name"], kind, note))
+    con.commit()
+
+
+def capture(con, text: str) -> None:
+    """Quick capture from the console header — a thought parked in the inbox, filed later."""
+    con.execute("INSERT INTO captures (ts, text) VALUES (?,?)", (_now(), text.strip()[:500]))
+    con.commit()
+
+
+def captures_open(con, limit: int = 12) -> list:
+    return con.execute(
+        "SELECT * FROM captures WHERE status='open' ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+
+
+def capture_set(con, cid: int, op: str) -> None:
+    con.execute("UPDATE captures SET status=? WHERE id=?",
+                ("filed" if op == "file" else "done", cid))
     con.commit()
 
 
