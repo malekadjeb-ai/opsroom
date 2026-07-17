@@ -86,7 +86,7 @@ def _collect_commits(em: Emitter, con, repo: str, venture: str, project: str, dr
                 files.append(parts[2])
     flush()
     if not dry_run and latest_iso:
-        import db
+        from .. import db
         db.set_watermark(con, wm_key, "ok", last_ts=latest_iso, last_ref=latest_iso)
     return new_shas
 
