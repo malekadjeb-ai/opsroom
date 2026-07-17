@@ -91,6 +91,26 @@ def main():
         html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
         assert "1,250" in html, "cash ledger not reflected in served page"
 
+        # search box: header carries the form; a query hits both ledgers
+        assert "action='/search'" in html or 'action="/search"' in html, "no search box"
+        con = db.connect()
+        con.execute("""INSERT INTO events (id, ts, source, kind, venture, summary, raw_ref)
+                       VALUES ('ev-s1', '2026-07-17T10:00:00', 'git', 'commit', 'demo',
+                               'wired the kestrel booking flow', 'repo:demo')""")
+        con.commit()  # the AFTER INSERT trigger populates events_fts
+        con.close()
+        page = urllib.request.urlopen(base + "/search?q=kestrel", timeout=5).read().decode()
+        assert "kestrel booking flow" in page, "event hit missing from /search"
+        assert "Jordan at Kestrel" in page, "lead hit missing from /search"
+        # FTS operator soup + LIKE wildcards must be literal text, never a 500
+        for evil in ['"a" OR (', "AND NOT *", "%_%", "<script>alert(1)</script>"]:
+            q = urllib.parse.urlencode({"q": evil})
+            r = urllib.request.urlopen(base + f"/search?{q}", timeout=5)
+            assert r.status == 200, f"search 500 on {evil!r}"
+            assert b"<script>alert(1)</script>" not in r.read(), "search echo unescaped"
+        r = urllib.request.urlopen(base + "/search?q=", timeout=5)
+        assert r.status == 200 and b"0 hits" in r.read()
+
         # unknown action + oversized body rejected
         code, _ = post(base + "/act", {"do": "nuke", "token": serve.TOKEN})
         assert code == 400
@@ -104,7 +124,7 @@ def main():
             code = e.code
         assert code == 403, f"rebound Host accepted: {code}"
         httpd.shutdown()
-    print("serve gate: render, CSRF, origin, writes, cadence, ledger math")
+    print("serve gate: render, CSRF, origin, writes, cadence, ledger math, search")
     return 0
 
 

@@ -2,6 +2,7 @@
 
 GET  /          live console, rebuilt from sources + ledgers per request
 GET  /version   change counter (page polls this and reloads itself after any write)
+GET  /search    one query across activity (FTS) + leads/touches/inbox ledgers
 POST /act       every button: touch / followup / cash / lead_add / lead_touch / loop
 
 Security posture (this thing accepts writes, so it's built paranoid):
@@ -41,8 +42,8 @@ def _money(v):
     return float(m.group(1).replace(",", "")) if m else None
 
 
-def _page() -> bytes:
-    from . import dashboard
+def _page(search_q=None) -> bytes:
+    from . import dashboard, views
     con = db.connect()
     ocon = ops.connect()
     try:
@@ -60,7 +61,14 @@ def _page() -> bytes:
             "touches": ops.touches_recent(ocon, 12),
             "promises": promises.open_promises(ocon), "captures": ops.captures_open(ocon),
         }
-        return dashboard.render(st, d, lps, sess, agents, serve_ctx=serve_ctx).encode()
+        search_ctx = None
+        if search_q is not None:
+            q = search_q.strip()[:120]
+            search_ctx = {"q": q, "events": views.search_events(con, q) if q else [],
+                          **(ops.search_ops(ocon, q) if q
+                             else {"leads": [], "touches": [], "captures": []})}
+        return dashboard.render(st, d, lps, sess, agents, serve_ctx=serve_ctx,
+                                search_ctx=search_ctx).encode()
     finally:
         con.close()
         ocon.close()
@@ -114,6 +122,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, f"<pre>render failed:\n{type(e).__name__}: {e}</pre>".encode())
         elif url.path == "/version":
             self._send(200, str(_REV[0]).encode(), "text/plain")
+        elif url.path == "/search":
+            q = (urllib.parse.parse_qs(url.query).get("q") or [""])[0]
+            try:
+                self._send(200, _page(search_q=q))
+            except Exception as e:
+                self._send(500, f"<pre>search failed:\n{type(e).__name__}: {e}</pre>".encode())
         elif url.path == "/context":
             con = db.connect()
             ocon = ops.connect()

@@ -253,7 +253,46 @@ def _serve_now_block(sx) -> str:
     return prom_html + due_html + tape_html + quick + cap_html + leads_html
 
 
-def render(st, drift, loops, sessions, agents=None, serve_ctx=None):
+def _search_panel(sx):
+    """Console-wide search results: one query across the activity ledger (FTS) and
+    the operator ledgers (leads, touches, inbox). All hit text is escaped."""
+    q = sx["q"]
+    ev_rows = "".join(
+        f"<tr><td>{esc((r['ts'] or '')[:16].replace('T', ' '))}</td>"
+        f"<td>{esc(r['venture'] or '?')}</td><td>{esc(r['kind'] or '')}</td>"
+        f"<td>{esc((r['summary'] or '')[:110])}</td></tr>" for r in sx["events"])
+    ev_html = (f"<h3>ACTIVITY ({len(sx['events'])})</h3><table>"
+               f"<tr><th>when</th><th>venture</th><th>kind</th><th>what</th></tr>"
+               f"{ev_rows}</table>" if ev_rows else "")
+    lead_rows = "".join(
+        f"<tr><td><b>{esc(r['name'])}</b></td><td>{_linkify(esc(r['phone'] or ''))}</td>"
+        f"<td>{esc(r['service'] or '')}</td><td><span class='pill'>{esc(r['status'])}</span>"
+        f"{' · $' + format(int(r['collected']), ',') if r['collected'] else ''}</td></tr>"
+        for r in sx["leads"])
+    lead_html = (f"<h3>LEADS ({len(sx['leads'])})</h3><table>{lead_rows}</table>"
+                 if lead_rows else "")
+    touch_rows = "".join(
+        f"<tr><td>{esc((r['ts'] or '')[:10])}</td><td><b>{esc(r['target'])}</b></td>"
+        f"<td>{esc(r['kind'])}</td><td>{esc(r['note'] or '')}</td></tr>" for r in sx["touches"])
+    touch_html = (f"<h3>TOUCHES ({len(sx['touches'])})</h3><table>{touch_rows}</table>"
+                  if touch_rows else "")
+    cap_rows = "".join(
+        f"<tr><td>{esc((r['ts'] or '')[:10])}</td><td>{esc(r['text'])}</td></tr>"
+        for r in sx["captures"])
+    cap_html = (f"<h3>INBOX ({len(sx['captures'])})</h3><table>{cap_rows}</table>"
+                if cap_rows else "")
+    total = sum(len(sx[k]) for k in ("events", "leads", "touches", "captures"))
+    body = (f"<div class='card'>{ev_html}{lead_html}{touch_html}{cap_html}</div>" if total else
+            "<div class='card'><p class='hint'>nothing matched — the console only knows "
+            "what the sources have synced and what you've logged</p></div>")
+    return f"""<div class="panel" id="search">
+<a class="back" href="/">← back to the console</a>
+<h2>SEARCH &ldquo;{esc(q)}&rdquo; · {total} hits</h2>
+{body}
+</div>"""
+
+
+def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=None):
     links = config.load()["links"]
     today = datetime.now().astimezone().date()
     days = st["days_to_goal"]
@@ -452,6 +491,13 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
         "static snapshot · <b>opsroom dash</b> to rebuild · nothing loads from the network"
     ctx_btn = ("<a class='ctx' href='/context' target='_blank' title='live operator brief — "
                "paste into any AI chat'>📋 context pack</a>" if serve_ctx else "")
+    qval = esc(search_ctx["q"]) if search_ctx else ""
+    qbox = (f"<form class='qsearch' method='get' action='/search'>"
+            f"<input class='search' name='q' value='{qval}' "
+            f"placeholder='⌕ search everything — activity, commits, leads, touches, inbox'>"
+            f"</form>" if serve_ctx else "")
+    search_panel = _search_panel(search_ctx) if search_ctx else ""
+    default_tab = "search" if search_ctx else "now"
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OPERATOR · {title_days}</title><style>
@@ -592,6 +638,7 @@ code{{background:var(--bg2);border:1px solid var(--line);padding:1px 6px;border-
 .search{{width:100%;padding:10px 12px;margin:10px 0;background:var(--bg2);border:1px solid var(--line);
   border-radius:9px;color:var(--ink);font:14px var(--sans)}}
 .search:focus{{outline:0;border-color:var(--go-line)}}
+.qsearch{{margin:9px 0 -2px}} .qsearch input{{margin:0;padding:8px 12px;font-size:13.5px}}
 .search::placeholder,input::placeholder{{color:var(--faint)}}
 details{{border-bottom:1px solid var(--line);padding:8px 0}} details:last-child{{border-bottom:0}}
 details summary{{cursor:pointer;list-style-position:outside;color:var(--ink)}}
@@ -672,6 +719,7 @@ footer b{{color:var(--dim)}}
 <header>
   <div class="brand"><h1><span class="bolt">⚡</span> OPERATOR</h1><time>{today.isoformat()}</time>{ctx_btn}</div>
   {head_stats}
+  {qbox}
   <nav>
     <a data-t="now" href="#now">🎯 NOW</a>
     <a data-t="ventures" href="#ventures">🏢 VENTURES</a>
@@ -684,6 +732,7 @@ footer b{{color:var(--dim)}}
 <div class="panel" id="ventures">{ventures_tab}</div>
 <div class="panel" id="money">{money_tab}</div>
 <div class="panel" id="activity">{activity_tab}</div>
+{search_panel}
 {details_pages}
 </main>
 <footer>{live_dot}<span>·</span>{esc(src)}<span>·</span>generated {esc(datetime.now(timezone.utc).isoformat()[:16])}Z</footer>
@@ -694,7 +743,7 @@ setInterval(function() {{
     .then(function(v) {{ if (v !== REV) location.reload(); }}).catch(function() {{}});
 }}, 5000);''' if serve_ctx else ''}
 function route(){{
-  var h = location.hash.slice(1) || 'now';
+  var h = location.hash.slice(1) || '{default_tab}';
   var found = false;
   document.querySelectorAll('.panel').forEach(function(p){{
     var on = p.id === h; if (on) found = true; p.classList.toggle('on', on);

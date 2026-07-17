@@ -150,17 +150,22 @@ def _fts_query(q: str) -> str:
     return " ".join(f'"{w}"' for w in words)
 
 
-def search(con, query):
+def search_events(con, query, limit=25):
+    """FTS hits over the activity ledger. Bad/empty queries return [], never raise."""
     fts = _fts_query(query)
-    rows = []
-    if fts:
-        try:
-            rows = con.execute(
-                """SELECT e.ts, e.venture, e.kind, e.summary, e.raw_ref FROM events_fts f
-                   JOIN events e ON e.rowid = f.rowid WHERE events_fts MATCH ?
-                   ORDER BY e.ts DESC LIMIT 25""", (fts,)).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
+    if not fts:
+        return []
+    try:
+        return con.execute(
+            """SELECT e.ts, e.venture, e.kind, e.summary, e.raw_ref FROM events_fts f
+               JOIN events e ON e.rowid = f.rowid WHERE events_fts MATCH ?
+               ORDER BY e.ts DESC LIMIT ?""", (fts, limit)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def search(con, query):
+    rows = search_events(con, query)
     print(f"\nSEARCH '{query}' · {len(rows)} hits\n")
     for r in rows:
         print(f"  {r['ts'][:16]}  [{r['venture']:<13}] {r['kind']:<11} {(r['summary'] or '')[:70]}")

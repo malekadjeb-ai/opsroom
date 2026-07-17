@@ -209,6 +209,24 @@ def touches_recent(con, limit: int = 25) -> list:
     return con.execute("SELECT * FROM touches ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
 
 
+def search_ops(con, q: str, limit: int = 15) -> dict:
+    """LIKE-match the operator ledgers (leads, touches, inbox captures) for the
+    console search. Param-bound with %_ escaped, so query text is always literal."""
+    pat = "%" + q.replace("\\", r"\\").replace("%", r"\%").replace("_", r"\_") + "%"
+    leads = con.execute(
+        r"""SELECT * FROM leads WHERE name LIKE ? ESCAPE '\' OR phone LIKE ? ESCAPE '\'
+            OR service LIKE ? ESCAPE '\' OR note LIKE ? ESCAPE '\'
+            ORDER BY added DESC LIMIT ?""", (pat, pat, pat, pat, limit)).fetchall()
+    touches = con.execute(
+        r"""SELECT * FROM touches WHERE target LIKE ? ESCAPE '\' OR note LIKE ? ESCAPE '\'
+            OR venture LIKE ? ESCAPE '\' ORDER BY ts DESC LIMIT ?""",
+        (pat, pat, pat, limit)).fetchall()
+    captures = con.execute(
+        r"""SELECT * FROM captures WHERE text LIKE ? ESCAPE '\'
+            ORDER BY ts DESC LIMIT ?""", (pat, limit)).fetchall()
+    return {"leads": leads, "touches": touches, "captures": captures}
+
+
 def today_tape(con) -> dict:
     """Today's operator tape: touches by kind + cash collected today (local day)."""
     start = _today().isoformat()
