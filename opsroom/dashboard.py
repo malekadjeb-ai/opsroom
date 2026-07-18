@@ -216,7 +216,8 @@ def _serve_now_block(sx) -> str:
     missed_html = ""
     if sx.get("missed_calls"):
         missed_html = (f"<div class='banner bad'>☎ {sx['missed_calls']} missed calls in the last "
-                       f"lead drop — numberless notifications; only your lead source shows who called.</div>")
+                       f"lead drop — numberless notifications; only your lead source shows who called."
+                       + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray") + "</div>")
     # PROMISES — what an agent staged and is still waiting on you
     prom_rows = "".join(
         f"<tr><td><b>{esc(p['venture'] or '?')}</b> "

@@ -126,10 +126,12 @@ def scan(con, now=None) -> int:
         mtime = _safe_mtime(f)
         if not mtime or mtime < cutoff or marks.get(str(f)) == mtime:
             continue
+        capped = False
         try:
             with open(f, errors="replace") as fh:
                 for line in fh:
                     if found >= MAX_PER_SCAN:
+                        capped = True  # stopped early — do NOT mark the file fully seen
                         break
                     for ts, sid, cwd, text in reader(line):
                         for ask in extract_from_text(text):
@@ -142,6 +144,8 @@ def scan(con, now=None) -> int:
                             found += cur.rowcount
         except OSError:
             continue
+        if capped:
+            break  # next scan resumes this file (mark unset) instead of skipping its tail
         con.execute("INSERT OR REPLACE INTO promise_marks(path, mtime) VALUES (?,?)",
                     (str(f), mtime))
     con.commit()

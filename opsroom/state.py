@@ -305,6 +305,12 @@ def next_actions(state):
             aged = f" (aged ~{state['leads_age']}d)" if state.get("leads_age") else ""
             a.insert(pos, f"Call the ~{state['leads_n']} open leads NEWEST FIRST"
                           f"{aged} — log every touch")
+        # the operator's single top move (dashboard one-move) surfaces on every venture
+        # it names, so the NOW hero and the venture's DO-NEXT never disagree.
+        one_move = state.get("one_move")
+        if one_move and key in ventures.attribute_text_all(one_move):
+            pos = 1 if (a and a[0].startswith("UNBLOCK FIRST")) else 0
+            a.insert(pos, f"▶ TOP MOVE: {one_move}")
         a += meta.get("playbook", [])
         acts[key] = a or ["No queued actions — check the tracker or add playbook lines in config"]
     return acts

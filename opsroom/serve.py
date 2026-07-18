@@ -236,6 +236,8 @@ class Handler(BaseHTTPRequestHandler):
                 promises.promise_set(ocon, form.get("pid", "")[:24], form.get("op", "done"))
             elif do == "reply":
                 inbox.reply_set(ocon, form.get("rid", "")[:24], form.get("op", "handled"))
+            elif do == "missed_clear":
+                ops.kv_set(ocon, "missed_calls", "0")
             elif do == "dispatch":
                 from . import dashboard, dispatch
                 task = form.get("task", "").strip()[:300]

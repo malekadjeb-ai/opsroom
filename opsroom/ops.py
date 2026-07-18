@@ -104,7 +104,7 @@ def log_touch(con, venture: str, target: str, kind: str, note: str = "",
             (due, venture, target, f"day-{followup_days} after {kind}", _now()))
         fid = cur.lastrowid
     con.execute("UPDATE leads SET last_touch=?, status='working' "
-                "WHERE name=? AND status IN ('open','working')", (_now(), target))
+                "WHERE lower(name)=lower(?) AND status IN ('open','working')", (_now(), target))
     con.commit()
     return fid
 
