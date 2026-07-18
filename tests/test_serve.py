@@ -111,6 +111,19 @@ def main():
         r = urllib.request.urlopen(base + "/search?q=", timeout=5)
         assert r.status == 200 and b"0 hits" in r.read()
 
+        # XSS rail (v0.6.1): a javascript: link in a reply drop must NOT reach an href
+        import json as _json
+        from opsroom import inbox
+        oc2 = ops.connect()
+        inbox.merge_replies(oc2, {"replies": [{
+            "msg_id": "x1", "from_name": "Mallory", "venture": "demo",
+            "subject": "hi", "snippet": "click me",
+            "link": "javascript:fetch('/act')"}]})
+        oc2.close()
+        page = urllib.request.urlopen(base + "/", timeout=5).read().decode()
+        assert "href='javascript:" not in page and 'href="javascript:' not in page, \
+            "javascript: scheme reached an href"
+
         # reply drafter: page renders; inbound text is escaped, never executed
         r = urllib.request.urlopen(base + "/draft", timeout=5)
         assert r.status == 200 and b"REPLY DRAFTER" in r.read()

@@ -88,8 +88,15 @@ def main():
         html = urllib.request.urlopen(base + "/", timeout=5).read().decode()
         assert "$6,750" in html, "net did not move after spend write"
         httpd.shutdown()
+
+        # v0.6.1: a lead's collection is attributed to ITS venture, not a "leads" bucket
+        lid = ops.add_lead(ocon, "Harbor Co", "5550100001", "sprint", venture="meridian")
+        ops.touch_lead(ocon, lid, "collected", 2000)
+        roi2 = {r["venture"]: r for r in ops.roi_rows(ocon)}
+        assert "leads" not in roi2, roi2
+        assert roi2["meridian"]["collected"] == 10500, roi2  # 8500 + 2000
         ocon.close()
-    print("money gate: spend ledger, per-venture P&L, simulator bake, /act spend")
+    print("money gate: spend ledger, per-venture P&L, simulator bake, /act spend, lead ROI")
     return 0
 
 

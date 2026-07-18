@@ -99,7 +99,8 @@ def merge_leads(ocon, parsed: dict) -> dict:
         name = (ld.get("name") or "").strip()[:80] or \
             f"{(ld.get('service') or 'imported').strip()[:40]} lead"
         ops.add_lead(ocon, name, phone, (ld.get("service") or "")[:80],
-                     " · ".join(b for b in note_bits if b)[:300])
+                     " · ".join(b for b in note_bits if b)[:300],
+                     venture=(ld.get("venture") or "")[:40])
         have.add(_digits(phone))
         added += 1
     if "missed_calls" in parsed:
@@ -137,7 +138,7 @@ def merge_replies(ocon, parsed: dict) -> dict:
              (r.get("snippet") or "")[:300], (r.get("link") or "")[:400]))
         if cur.rowcount == 1:
             added += 1
-            target = (r.get("target") or r.get("from_name") or r.get("from_email"))[:120]
+            target = (r.get("target") or r.get("from_name") or r.get("from_email") or "")[:120]
             venture = (r.get("venture") or "unknown")[:40]
             ops.log_touch(ocon, venture, target, "replied",
                           note=f"auto: reply — {(r.get('subject') or '')[:80]}",
@@ -171,8 +172,14 @@ def reply_set(con, rid: str, op: str) -> None:
 
 # ---------------------------------------------------------------- drop files
 
+MAX_DROP_BYTES = 25 * 1024 * 1024  # a drop is a mail/CRM export, not a data lake
+
+
 def _import(ocon, path: Path, merge) -> dict:
     try:
+        if path.stat().st_size > MAX_DROP_BYTES:
+            return {"error": f"drop exceeds {MAX_DROP_BYTES // (1024 * 1024)}MB cap",
+                    "added": 0, "skipped": 0}
         parsed = json.loads(path.read_text())
     except (OSError, ValueError) as e:
         return {"error": str(e), "added": 0, "skipped": 0}
@@ -194,7 +201,9 @@ _MTIMES = {}
 
 def watch_tick(ocon) -> bool:
     """One poll: re-import either drop file when its mtime changes. Used by the
-    serve sync loop. Returns True when anything was ingested."""
+    serve sync loop. Returns True when anything was ingested. The mtime is recorded
+    only after a clean import, so a malformed/half-written drop is retried next tick
+    instead of being marked seen and silently skipped forever."""
     changed = False
     for path, imp in ((leads_drop_path(), import_leads),
                       (replies_drop_path(), import_replies)):
@@ -202,8 +211,14 @@ def watch_tick(ocon) -> bool:
             mt = path.stat().st_mtime
         except OSError:
             continue
-        if _MTIMES.get(str(path)) != mt:
-            _MTIMES[str(path)] = mt
+        if _MTIMES.get(str(path)) == mt:
+            continue
+        try:
             r = imp(ocon, path)
-            changed = changed or bool(r.get("added"))
+        except Exception:
+            continue  # leave mtime unset so the next tick retries this drop
+        if r.get("error"):
+            continue  # bad JSON: don't mark seen, retry when the file is rewritten
+        _MTIMES[str(path)] = mt
+        changed = changed or bool(r.get("added"))
     return changed

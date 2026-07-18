@@ -32,6 +32,15 @@ def _rel(ts, today):
     return "today" if n <= 0 else ("yesterday" if n == 1 else f"{n}d ago")
 
 
+def _safe_url(u: str) -> str:
+    """Allowlist the URL scheme before a value from an untrusted drop reaches an
+    href. html.escape neutralizes <>'&quot; but NOT javascript:/data: schemes, so a
+    reply-drop link could otherwise become a one-click script on the token-bearing
+    origin. Only http(s) survives; anything else renders as inert text elsewhere."""
+    u = (u or "").strip()
+    return u if re.match(r"https?://", u, re.I) else ""
+
+
 def _linkify(escaped: str) -> str:
     """tel: links for phone numbers, https links for bare domains, on ALREADY-ESCAPED text."""
     def tel(m):
@@ -186,8 +195,9 @@ def _serve_now_block(sx) -> str:
     reply_rows = ""
     for r in sx.get("replies", []):
         who = r["from_name"] or r["from_email"] or r["target"] or "?"
-        link = (f" <a href='{esc(r['link'])}' target='_blank'>open ↗</a>"
-                if r["link"] else "")
+        safe_link = _safe_url(r["link"])
+        link = (f" <a href='{esc(safe_link)}' target='_blank' rel='noopener noreferrer'>open ↗</a>"
+                if safe_link else "")
         snip = f"<div><small>“{esc((r['snippet'] or '')[:180])}”</small></div>" if r["snippet"] else ""
         reply_rows += (
             f"<tr><td><b>{esc(who)}</b> <span class='loop-meta'>{esc(r['venture'] or '')}"
@@ -257,6 +267,7 @@ def _serve_now_block(sx) -> str:
 <input name="name" placeholder="new lead — name" required>
 <input name="phone" placeholder="phone">
 <input name="service" placeholder="service">
+<select name="venture">{vopts}</select>
 <button class="btn small">+ lead</button></form>
 <form class="row" method="post" action="/act">
 <input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="capture">
@@ -282,9 +293,12 @@ def _serve_now_block(sx) -> str:
 <button class='btn small'>collected</button></form>"""
         + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "lost"}, "lost", "btn small gray")
         + "</td></tr>" for r in sx["leads"][:20])
+    n_leads = len(sx["leads"])
+    more = (f"<p class='hint'>showing the 20 oldest of {n_leads} — "
+            f"<a href='/search?q='>search</a> to find a specific lead</p>" if n_leads > 20 else "")
     leads_html = (f"<div class='card'><div class='cardhead'>"
-                  f"<h3>📇 LEADS — {len(sx['leads'])} open (oldest touch first)</h3></div>"
-                  f"<table>{lead_rows}</table></div>" if sx["leads"] else "")
+                  f"<h3>📇 LEADS — {n_leads} open (oldest touch first)</h3></div>"
+                  f"<table>{lead_rows}</table>{more}</div>" if sx["leads"] else "")
     return replies_html + missed_html + prom_html + due_html + tape_html + quick + cap_html + leads_html
 
 
@@ -461,6 +475,49 @@ def _search_panel(sx):
 </div>"""
 
 
+def _ledger_cards(serve_ctx) -> str:
+    """Cash ledger + spend ledger + per-venture ROI — the P&L surface. Independent
+    of whether a goal is set, so 'no goal' never hides the money you've logged."""
+    tok = serve_ctx["token"]
+    vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
+                    for k, v in ventures.VENTURES.items() if k != "unknown")
+    entry_rows = "".join(
+        f"<tr><td>{esc(e['ts'][:10])}</td><td><b>${int(e['amount']):,}</b></td>"
+        f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
+        for e in serve_ctx["cash_entries"])
+    out = f"""<div class="card"><div class="cardhead"><h3>🧾 Cash ledger (append-only — this drives the bar)</h3></div>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="cash">
+<input name="amount" placeholder="$ amount" required inputmode="decimal">
+<select name="venture">{vopts}</select>
+<input name="what" placeholder="for what">
+<button class="btn small">record</button></form>
+<table>{entry_rows or '<tr><td class="hint">nothing collected yet — the first entry moves the bar</td></tr>'}</table></div>"""
+    spend_rows = "".join(
+        f"<tr><td>{esc(e['ts'][:10])}</td><td><b class='warn'>−${int(e['amount']):,}</b></td>"
+        f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
+        for e in serve_ctx["spend_entries"])
+    out += f"""<div class="card"><div class="cardhead"><h3>💸 Spend ledger (money out — makes the P&amp;L honest)</h3></div>
+<form class="row" method="post" action="/act">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="spend">
+<input name="amount" placeholder="$ spent" required inputmode="decimal">
+<select name="venture">{vopts}</select>
+<input name="what" placeholder="on what (ads, tools, gear…)">
+<button class="btn small gray">record spend</button></form>
+<table>{spend_rows or '<tr><td class="hint">nothing logged out yet — ads, tools, and gear go here</td></tr>'}</table></div>"""
+    roi = serve_ctx.get("roi") or []
+    if roi:
+        roi_rows_html = "".join(
+            f"<tr><td><b>{esc(ventures.VENTURES.get(r['venture'], {}).get('label', r['venture']))}</b></td>"
+            f"<td>${r['collected']:,}</td><td>${r['spend']:,}</td>"
+            f"<td><b class='{'warn' if r['net'] < 0 else ''}'>"
+            f"{'−' if r['net'] < 0 else ''}${abs(r['net']):,}</b></td></tr>" for r in roi)
+        out += f"""<div class="card"><div class="cardhead"><h3>📈 Where the money comes from — per-venture P&amp;L</h3></div>
+<table><tr><th>venture</th><th>in</th><th>out</th><th>net</th></tr>{roi_rows_html}</table>
+<p class="hint">Attribution is whatever venture you logged on each entry — honest and simple.</p></div>"""
+    return out
+
+
 def _sim_card(st, cash, goal, days, open_leads):
     """Path-to-goal simulator — what-if math the operator can drag, all client-side.
     Live numbers are baked in server-side; nothing leaves the page, nothing persists.
@@ -545,8 +602,8 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
         f"<tr><td><b>{esc(r['target'])}</b></td><td>{esc(r['channel'])}</td>"
         f"<td><span class='pill ok'>{esc(r['status'])}</span></td><td>{_linkify(esc(r['next']))}</td></tr>"
         for r in send)
-    mail_btn = (f"<a class='btn' href='{esc(links['mail_drafts'])}' target='_blank'>Open drafts →</a>"
-                if links.get("mail_drafts") else "")
+    mail_btn = (f"<a class='btn' href='{esc(_safe_url(links['mail_drafts']))}' target='_blank'>Open drafts →</a>"
+                if _safe_url(links.get("mail_drafts")) else "")
     send_html = f"""<div class="card action">
 <div class="cardhead"><h3>📧 SEND — {len(send)} drafts staged (60-second review each)</h3>
 {mail_btn}</div>
@@ -563,8 +620,8 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
 <table>{call_rows}</table></div>""" if call else ""
     leads_html = ""
     if st["leads_n"]:
-        leads_btn = (f"<a class='btn' href='{esc(links['leads'])}' target='_blank'>Open leads →</a>"
-                     if links.get("leads") else "")
+        leads_btn = (f"<a class='btn' href='{esc(_safe_url(links['leads']))}' target='_blank'>Open leads →</a>"
+                     if _safe_url(links.get("leads")) else "")
         vlabel = ventures.VENTURES.get(st["leads_venture"], {}).get("label", "")
         aged = f", aged ~{st['leads_age']}d" if st.get("leads_age") else ""
         leads_html = f"""<div class="card action">
@@ -618,7 +675,7 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
 
     # ---------- MONEY ----------
     if goal:
-        remaining = goal - cash
+        remaining = max(0, goal - cash)  # past the goal: nothing left to raise, not a negative
         per_day = round(remaining / days) if days and days > 0 else remaining
         band = (f"<p class='hint'>Honest band: <b>{esc(st['band'])}</b></p>"
                 if st.get("band") else "")
@@ -650,44 +707,14 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
    "Update the Live-state table in your dashboard note; opsroom reads it on every refresh."}</p>
 </section>"""
         if serve_ctx:
-            entry_rows = "".join(
-                f"<tr><td>{esc(e['ts'][:10])}</td><td><b>${int(e['amount']):,}</b></td>"
-                f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
-                for e in serve_ctx["cash_entries"])
-            tok = serve_ctx["token"]
-            vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
-                            for k, v in ventures.VENTURES.items() if k != "unknown")
-            money_tab += f"""<div class="card"><div class="cardhead"><h3>🧾 Cash ledger (append-only — this drives the bar)</h3></div>
-<form class="row" method="post" action="/act">
-<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="cash">
-<input name="amount" placeholder="$ amount" required inputmode="decimal">
-<select name="venture">{vopts}</select>
-<input name="what" placeholder="for what">
-<button class="btn small">record</button></form>
-<table>{entry_rows or '<tr><td class="hint">nothing collected yet — the first entry moves the bar</td></tr>'}</table></div>"""
-            spend_rows = "".join(
-                f"<tr><td>{esc(e['ts'][:10])}</td><td><b class='warn'>−${int(e['amount']):,}</b></td>"
-                f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
-                for e in serve_ctx["spend_entries"])
-            money_tab += f"""<div class="card"><div class="cardhead"><h3>💸 Spend ledger (money out — makes the P&amp;L honest)</h3></div>
-<form class="row" method="post" action="/act">
-<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="spend">
-<input name="amount" placeholder="$ spent" required inputmode="decimal">
-<select name="venture">{vopts}</select>
-<input name="what" placeholder="on what (ads, tools, gear…)">
-<button class="btn small gray">record spend</button></form>
-<table>{spend_rows or '<tr><td class="hint">nothing logged out yet — ads, tools, and gear go here</td></tr>'}</table></div>"""
-            roi = serve_ctx.get("roi") or []
-            if roi:
-                roi_rows_html = "".join(
-                    f"<tr><td><b>{esc(ventures.VENTURES.get(r['venture'], {}).get('label', r['venture']))}</b></td>"
-                    f"<td>${r['collected']:,}</td><td>${r['spend']:,}</td>"
-                    f"<td><b class='{'warn' if r['net'] < 0 else ''}'>"
-                    f"{'−' if r['net'] < 0 else ''}${abs(r['net']):,}</b></td></tr>" for r in roi)
-                money_tab += f"""<div class="card"><div class="cardhead"><h3>📈 Where the money comes from — per-venture P&amp;L</h3></div>
-<table><tr><th>venture</th><th>in</th><th>out</th><th>net</th></tr>{roi_rows_html}</table>
-<p class="hint">Attribution is whatever venture you logged on each entry — honest and simple.</p></div>"""
+            money_tab += _ledger_cards(serve_ctx)
             money_tab += _sim_card(st, cash, goal, days, len(serve_ctx.get("leads") or []))
+    elif serve_ctx:
+        # no goal, but live: the ledgers are still the whole point — show them, plus
+        # a nudge to set a goal (so the NOW cash/spend forms aren't write-only).
+        money_tab = ("<div class='card'><h3>No goal set — P&amp;L still live</h3><p class='hint'>Add "
+                     "[goal] amount + deadline in config.toml (or <b>opsroom init</b>) to turn this into "
+                     "a countdown. Your ledgers below work either way.</p></div>") + _ledger_cards(serve_ctx)
     else:
         money_tab = ("<div class='card'><h3>No goal configured</h3><p class='hint'>Set "
                      "[goal] amount + deadline in config.toml (or run <b>opsroom init</b>) and the "

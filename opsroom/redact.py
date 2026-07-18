@@ -75,3 +75,16 @@ def redact(text: str):
     text, _ = _ENV_LINE_UPPER.subn(_env_sub_upper, text)
     hits += text.count("[REDACTED:env]")
     return text, hits
+
+
+def scrub(text: str) -> str:
+    """Fail-closed redaction for free text headed into the write ledger (captures,
+    notes, ledger memos, reply snippets) and the dispatch brief. On any internal
+    error it returns a placeholder rather than the raw text, so a secret can never
+    survive a redactor failure. Use where dropping the whole record is too harsh."""
+    if not text:
+        return text
+    try:
+        return redact(text)[0]
+    except Exception:
+        return "[redaction failed — text withheld]"

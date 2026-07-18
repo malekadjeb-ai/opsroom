@@ -65,8 +65,25 @@ def main():
         assert "OPEN PROMISES" in pack  # we still have open promises
         assert "a fresh unfiled thought" in pack  # inbox surfaced
         con.close()
+
+        # v0.6.1: today_tape uses UTC bounds for the LOCAL day — an entry stamped
+        # just before local midnight (UTC ts) must not smear into two days' tapes.
+        from datetime import datetime, timedelta, timezone
+        s, e = ops._local_day_utc_bounds()
+        assert s < e and (datetime.fromisoformat(e) - datetime.fromisoformat(s)) == timedelta(days=1)
+        ocon.execute("INSERT INTO cash (ts, amount, venture, what) VALUES (?,?,?,?)",
+                     (e, 999, "x", "tomorrow"))  # first instant of tomorrow, exclusive
+        ocon.commit()
+        assert ops.today_tape(ocon)["cash"] != 999, "tomorrow's entry leaked into today's tape"
+
+        # v0.6.1: daily_writeback no longer NameErrors — dry-run returns a real block
+        from opsroom import views
+        try:
+            views.daily_writeback(con2 := db.connect(), dry_run=True)
+        finally:
+            con2.close()
         ocon.close()
-    print("features gate: promises extract/persist, capture inbox, context pack")
+    print("features gate: promises, capture, context pack, tape bounds, daily writeback")
     return 0
 
 

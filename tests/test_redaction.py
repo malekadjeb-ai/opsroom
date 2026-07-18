@@ -58,10 +58,28 @@ def main():
         print(f"planted={len(PLANTED)} ingested={total} redacted_rows={red}")
         for r in con.execute("SELECT summary FROM events"):
             print("  ", r["summary"][:110])
+        # ops.db free text (v0.6.1): capture / cash memo / lead note must scrub too
+        import os
+        os.environ["OPSROOM_DATA_DIR"] = str(Path(td) / "opsdata")
+        os.environ["OPSROOM_CONFIG_DIR"] = str(Path(td) / "opscfg")
+        from opsroom import ops
+        oc = ops.connect()
+        ops.capture(oc, "note to self AKIAIOSFODNN7EXAMPLE and sk_live_FAKEFAKEFAKEFAKEFAKE99")
+        ops.log_cash(oc, 100, "demo", "deposit; token=whsec_9kQz7XvB2mNpL4RtYcE8FAKE")
+        ops.add_lead(oc, "Lead", "5550100000", "svc", "ghp_FAKEFAKEFAKEFAKEFAKEFAKE12345678")
+        blob = " ".join([
+            (oc.execute("SELECT text FROM captures").fetchone() or [""])[0],
+            (oc.execute("SELECT what FROM cash").fetchone() or [""])[0],
+            (oc.execute("SELECT note FROM leads").fetchone() or [""])[0]])
+        oc.close()
+        for m in ("AKIAIOSFODNN7EXAMPLE", "sk_live_FAKE", "whsec_9kQz", "ghp_FAKE"):
+            if m in blob:
+                failures.append(f"LEAK in ops.db free text: '{m}'")
+
         if failures:
             print("\n".join(failures))
             return 1
-        print("REDACTION GATE: PASS (zero planted secrets in DB)")
+        print("REDACTION GATE: PASS (zero planted secrets in activity.db OR ops.db)")
         return 0
 
 

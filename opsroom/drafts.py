@@ -21,7 +21,7 @@ from . import ventures
 
 # intent tags via keyword rules — cheap, testable, deterministic
 _RULES = {
-    "price":    r"(?i)how much|price|pricing|quote|cost|charge|rate\b|estimate|budget",
+    "price":    r"(?i)how much|price|pricing|quote|\bcost|\bcharge|\brate\b|estimate|budget",
     "schedule": r"(?i)\bwhen\b|available|availability|book|schedule|come out|appointment"
                 r"|this week|tomorrow|today\b",
     "interest": r"(?i)interested|tell me more|sounds good|more info|learn more|curious",

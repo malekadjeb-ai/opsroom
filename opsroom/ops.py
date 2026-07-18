@@ -16,7 +16,7 @@ import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config
+from . import config, redact
 
 FOLLOWUP_DAYS = 3  # default cadence: every touch schedules a day-3 follow-up
 
@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS spend (
 CREATE TABLE IF NOT EXISTS leads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   added TEXT NOT NULL, name TEXT NOT NULL, phone TEXT, service TEXT, note TEXT,
-  status TEXT DEFAULT 'open', last_touch TEXT, quoted REAL, collected REAL
+  status TEXT DEFAULT 'open', last_touch TEXT, quoted REAL, collected REAL,
+  venture TEXT
 );
 CREATE TABLE IF NOT EXISTS captures (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +68,10 @@ def connect() -> sqlite3.Connection:
         os.close(os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))  # create at 600
     con = sqlite3.connect(p)
     con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=15000")  # wait out a concurrent writer, don't 500
     con.executescript(SCHEMA)
+    if "venture" not in {r[1] for r in con.execute("PRAGMA table_info(leads)")}:
+        con.execute("ALTER TABLE leads ADD COLUMN venture TEXT")  # migrate pre-0.6.1 ledgers
     con.row_factory = sqlite3.Row
     for suffix in ("", "-wal", "-shm"):
         f = Path(str(p) + suffix)
@@ -90,7 +94,7 @@ def log_touch(con, venture: str, target: str, kind: str, note: str = "",
               followup_days: int = FOLLOWUP_DAYS) -> int:
     """Log an outreach touch and schedule its follow-up. Returns followup id (0 if none)."""
     con.execute("INSERT INTO touches (ts, venture, target, kind, note) VALUES (?,?,?,?,?)",
-                (_now(), venture, target, kind, note))
+                (_now(), venture, target, kind, redact.scrub(note)))
     fid = 0
     if followup_days > 0:
         due = (_today() + timedelta(days=followup_days)).isoformat()
@@ -119,49 +123,54 @@ def followup_set(con, fid: int, op: str) -> None:
 def log_cash(con, amount: float, venture: str, what: str = "") -> None:
     """Append-only. Cash counts when COLLECTED — this ledger is the source of truth."""
     con.execute("INSERT INTO cash (ts, amount, venture, what) VALUES (?,?,?,?)",
-                (_now(), amount, venture, what))
+                (_now(), amount, venture, redact.scrub(what)))
     con.commit()
 
 
 def log_spend(con, amount: float, venture: str, what: str = "") -> None:
     """Append-only money-out ledger — the other half of the P&L."""
     con.execute("INSERT INTO spend (ts, amount, venture, what) VALUES (?,?,?,?)",
-                (_now(), amount, venture, what))
+                (_now(), amount, venture, redact.scrub(what)))
     con.commit()
 
 
-def add_lead(con, name: str, phone: str = "", service: str = "", note: str = "") -> int:
+def add_lead(con, name: str, phone: str = "", service: str = "", note: str = "",
+             venture: str = "") -> int:
     cur = con.execute(
-        "INSERT INTO leads (added, name, phone, service, note) VALUES (?,?,?,?,?)",
-        (_now(), name, phone, service, note))
+        "INSERT INTO leads (added, name, phone, service, note, venture) VALUES (?,?,?,?,?,?)",
+        (_now(), name, phone, service, redact.scrub(note), venture))
     con.commit()
     return cur.lastrowid
 
 
 def touch_lead(con, lead_id: int, kind: str, amount=None, note: str = "") -> None:
-    row = con.execute("SELECT name FROM leads WHERE id=?", (lead_id,)).fetchone()
+    row = con.execute("SELECT name, venture FROM leads WHERE id=?", (lead_id,)).fetchone()
     if not row:
         return
+    # attribute a lead's cash to its own venture (falls back to 'leads' if unset) so
+    # per-venture ROI stays honest instead of piling every collection into one bucket.
+    venture = row["venture"] or "leads"
     if kind == "quoted" and amount:
         con.execute("UPDATE leads SET quoted=?, last_touch=?, status='working' WHERE id=?",
                     (amount, _now(), lead_id))
     elif kind == "collected" and amount:
         con.execute("UPDATE leads SET collected=COALESCE(collected,0)+?, last_touch=?, "
                     "status='won' WHERE id=?", (amount, _now(), lead_id))
-        log_cash(con, amount, "leads", f"lead: {row['name']}")
+        log_cash(con, amount, venture, f"lead: {row['name']}")
     elif kind == "lost":
         con.execute("UPDATE leads SET status='lost', last_touch=? WHERE id=?", (_now(), lead_id))
     else:  # called / texted / emailed …
         con.execute("UPDATE leads SET last_touch=?, status='working' WHERE id=?",
                     (_now(), lead_id))
         con.execute("INSERT INTO touches (ts, venture, target, kind, note) VALUES (?,?,?,?,?)",
-                    (_now(), "leads", row["name"], kind, note))
+                    (_now(), venture, row["name"], kind, redact.scrub(note)))
     con.commit()
 
 
 def capture(con, text: str) -> None:
     """Quick capture from the console header — a thought parked in the inbox, filed later."""
-    con.execute("INSERT INTO captures (ts, text) VALUES (?,?)", (_now(), text.strip()[:500]))
+    con.execute("INSERT INTO captures (ts, text) VALUES (?,?)",
+                (_now(), redact.scrub(text.strip()[:500])))
     con.commit()
 
 
@@ -261,18 +270,28 @@ def search_ops(con, q: str, limit: int = 15) -> dict:
     return {"leads": leads, "touches": touches, "captures": captures}
 
 
+def _local_day_utc_bounds():
+    """UTC-isoformat [start, end) spanning the current LOCAL day, so string
+    comparisons against UTC timestamps don't smear evening entries across two days."""
+    now = datetime.now().astimezone()
+    start_local = datetime(now.year, now.month, now.day, tzinfo=now.tzinfo)
+    end_local = start_local + timedelta(days=1)
+    return (start_local.astimezone(timezone.utc).isoformat(),
+            end_local.astimezone(timezone.utc).isoformat())
+
+
 def today_tape(con) -> dict:
     """Today's operator tape: touches by kind + cash collected today (local day)."""
-    start = _today().isoformat()
+    start, end = _local_day_utc_bounds()
     tape = {"touches": 0, "calls": 0, "sends": 0, "cash": 0.0}
-    for r in con.execute("SELECT kind, COUNT(*) c FROM touches WHERE ts >= ? GROUP BY kind",
-                         (start,)):
+    for r in con.execute("SELECT kind, COUNT(*) c FROM touches WHERE ts >= ? AND ts < ? "
+                         "GROUP BY kind", (start, end)):
         tape["touches"] += r["c"]
         if r["kind"] in ("call", "called"):
             tape["calls"] += r["c"]
         elif r["kind"] in ("email", "send", "sent", "text", "texted", "dm"):
             tape["sends"] += r["c"]
-    row = con.execute("SELECT COALESCE(SUM(amount),0) s FROM cash WHERE ts >= ?",
-                      (start,)).fetchone()
+    row = con.execute("SELECT COALESCE(SUM(amount),0) s FROM cash WHERE ts >= ? AND ts < ?",
+                      (start, end)).fetchone()
     tape["cash"] = row["s"]
     return tape

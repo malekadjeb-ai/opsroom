@@ -46,6 +46,9 @@ def main():
         assert "interest" in drafts.detect("I'm interested, tell me more")
         assert "call" in drafts.detect("can we talk Thursday")
         assert drafts.detect("lorem ipsum") == set()
+        # v0.6.1: 'corporate'/'operate' must NOT trip the price intent (word-boundary rail)
+        assert "price" not in drafts.detect("we are a corporate office"), "rate\\b misfired"
+        assert "price" not in drafts.detect("we operate nationwide")
 
         # deterministic: same input -> same output
         a = drafts.draft_reply("meridian", "what's the price?", "Jordan")

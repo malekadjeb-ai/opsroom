@@ -22,7 +22,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import contextpack, db, enrich, inbox, ops, promises, state, views
+from . import contextpack, db, enrich, inbox, ops, promises, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -125,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self._send(200, _page())
             except Exception as e:  # never a white page: show the error, keep serving
-                self._send(500, f"<pre>render failed:\n{type(e).__name__}: {e}</pre>".encode())
+                self._send(500, f"render failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/version":
             self._send(200, str(_REV[0]).encode(), "text/plain")
         elif url.path == "/search":
@@ -133,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self._send(200, _page(search_q=q))
             except Exception as e:
-                self._send(500, f"<pre>search failed:\n{type(e).__name__}: {e}</pre>".encode())
+                self._send(500, f"search failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/draft":
             from . import dashboard, drafts
             qs = urllib.parse.parse_qs(url.query)
@@ -144,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
                 draft = drafts.draft_reply(venture, msg, name) if msg else None
                 self._send(200, dashboard.draft_page(TOKEN, venture, msg, name, draft).encode())
             except Exception as e:
-                self._send(500, f"<pre>draft failed:\n{type(e).__name__}: {e}</pre>".encode())
+                self._send(500, f"draft failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/do":
             from . import dashboard, dispatch
             qs = urllib.parse.parse_qs(url.query)
@@ -156,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
                     TOKEN, task, venture, brief, dispatch.agent_ready(),
                     history=dispatch.recent()).encode())
             except Exception as e:
-                self._send(500, f"<pre>brief failed:\n{type(e).__name__}: {e}</pre>".encode())
+                self._send(500, f"brief failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/context":
             con = db.connect()
             ocon = ops.connect()
@@ -213,16 +213,19 @@ class Handler(BaseHTTPRequestHandler):
                 name = form.get("name", "").strip()[:80]
                 if name:
                     ops.add_lead(ocon, name, form.get("phone", "")[:30],
-                                 form.get("service", "")[:80], form.get("note", "")[:300])
+                                 form.get("service", "")[:80], form.get("note", "")[:300],
+                                 venture=form.get("venture", "")[:40])
             elif do == "lead_touch":
                 ops.touch_lead(ocon, int(form["id"]), form.get("kind", "called")[:20],
                                _money(form.get("amount")), form.get("note", "")[:300])
             elif do == "loop":
                 con = db.connect()
-                con.execute("UPDATE loops SET status='dismissed' WHERE id=? AND status='open'",
-                            (form.get("lid", "")[:64],))
-                con.commit()
-                con.close()
+                try:
+                    con.execute("UPDATE loops SET status='dismissed' WHERE id=? AND status='open'",
+                                (form.get("lid", "")[:64],))
+                    con.commit()
+                finally:
+                    con.close()
             elif do == "capture":
                 text = form.get("text", "").strip()
                 if text:
@@ -266,14 +269,17 @@ def _sync_loop():
     while True:
         time.sleep(SYNC_EVERY)
         try:
+            ventures.refresh()  # pick up config edits (offer, goal, ventures) without a restart
             con = db.connect()
             from .collectors import cli as c_cli, codex as c_codex, git as c_git, \
                 fs as c_fs, notes as c_notes, chat as c_chat
             git_r, notes_r = {}, {}
+            new = 0
             for name, mod in (("cli", c_cli), ("codex", c_codex), ("git", c_git),
                               ("fs", c_fs), ("notes", c_notes), ("chat", c_chat)):
                 try:
                     r = mod.collect(con)
+                    new += (r.get("events_new", 0) if isinstance(r, dict) else 0)
                     if name == "git":
                         git_r = r
                     if name == "notes":
@@ -287,9 +293,12 @@ def _sync_loop():
             con.close()
             oc = ops.connect()
             promises.scan(oc)
-            inbox.watch_tick(oc)  # re-import lead/reply drops on file change
+            ingested = inbox.watch_tick(oc)  # re-import lead/reply drops on file change
             oc.close()
-            _bump()
+            # only trigger a client reload when something actually changed, so the
+            # /version poller can't wipe half-typed input on an idle 15-minute tick.
+            if new or ingested:
+                _bump()
         except Exception:
             pass  # next tick retries; the console keeps serving current state
 

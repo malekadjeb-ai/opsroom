@@ -284,6 +284,7 @@ def daily_writeback(con, dry_run=True):
         lines.append(f"- {s['venture']}: {s['n']} sessions, {int(s['m'] or 0)}m")
     share = round(100 * d['trap_min'] / d['total_min']) if d['total_min'] else 0
     lines.append(f"- open loops: {open_loops}; trap-zone share this week: {share}%")
+    block = "\n".join(lines) + "\n"
     try:
         block, _ = redact.redact(block)
     except Exception as e:
