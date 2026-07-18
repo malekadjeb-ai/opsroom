@@ -41,7 +41,17 @@ And "open loops": everything you started and silently dropped.
 The agent said "next I'll wire up the tests" … and no commit ever followed. Stale
 branches. Orphaned tasks. It all stays on the board until closed.
 
-**Tweet 5 (CTA):**
+**Tweet 5 (it operates, not just measures):**
+
+Then it stopped being a dashboard.
+
+The whole console is now one money-ranked DO NOW stack — replies, follow-ups, leads,
+staged drafts — each row DOable in place: draft the reply, tap to dial, or hand the
+task to your local agent CLI with a full context brief.
+
+Measurement → action → back to the agents.
+
+**Tweet 6 (CTA):**
 
 pipx install opsroom-console
 opsroom demo   ← fully loaded fictional console in 10 seconds

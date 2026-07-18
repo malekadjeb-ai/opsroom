@@ -18,7 +18,7 @@ So opsroom reads what already exists on your disk — Claude Code logs
 exports, your git repos, your markdown notes — into one SQLite file, and renders a
 single local HTML console. No cloud, no accounts, no deps (stdlib only).
 
-The features that changed my behavior:
+What it measures, that changed my behavior:
 
 - **Trap-zone drift**: hours in $0-revenue projects vs revenue projects, red alert
   when building beats selling. The engineer's trap, made visible.
@@ -26,8 +26,20 @@ The features that changed my behavior:
   transcripts with no follow-up commit, stale branches, orphaned tasks.
 - **BY AGENT**: Claude vs Codex vs ChatGPT — sessions, hours, which venture each
   actually worked on.
-- **Sitrep**: six lines every morning — cash vs goal, aging leads, the single
-  highest-cash action today.
+
+Then I stopped just measuring and made it operate. The console is now one local app
+(loopback HTTP, CSRF-gated, still zero egress) where the whole thing is a single
+money-ranked **DO NOW** stack — replies to answer, follow-ups due, staged drafts,
+leads to call — each row DOable in place:
+
+- A **reply drafter** that turns a pasted inbound message into a rails-correct reply
+  from your own config (deterministic, no LLM call, never echoes a number you didn't
+  write down).
+- A **cash + spend + ROI** ledger — real per-venture P&L, not just a vanity meter.
+- **Agent dispatch**: the top action becomes a one-tap hand-off to your local agent
+  CLI with a full context brief — the loop closes back to the agents that started it.
+- A live **AGENTS RUNNING** panel that reads which Claude Code sessions are alive
+  right now (interactive, cowork, background), attributed per venture.
 
 Security posture, since it reads terminal history: fail-closed secret redaction
 before anything touches the DB, zero network egress, 600-perm SQLite that refuses

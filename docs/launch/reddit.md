@@ -14,7 +14,13 @@ sessions that ended with "next I'll…" and no follow-up commit, and hours in
 $0-revenue projects vs projects that pay.
 
 It also ingests Codex CLI logs and ChatGPT exports, so if you run multiple agents
-you get a BY AGENT comparison table.
+you get a BY AGENT comparison table — and a live panel of which Claude Code sessions
+are running right now (interactive/cowork/background), attributed per project.
+
+Then it goes further than a dashboard: the console is a local app where everything
+worth doing collapses into one ranked DO NOW list, and any action can be handed back
+to your local agent CLI with a full context brief. Measurement → action → back to
+the agent.
 
 Local-only (SQLite, no network egress, fail-closed secret redaction since it reads
 terminal history). `pipx install opsroom-console && opsroom demo` shows a fictional loaded

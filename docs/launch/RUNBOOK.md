@@ -5,7 +5,7 @@ Everything below is the human-in-the-loop launch. Do it on a **Tue/Wed/Thu, 6:00
 Pacific**. Block 4–6 hours after — you must answer comments fast, that's the #1 lever.
 
 ## Already done (no action needed)
-- [x] Code pushed, repo public, v0.3.0 tagged + released, CI green on public repo
+- [x] Code pushed, repo public, v0.7.0 tagged + released, CI green on public repo
 - [x] `opsroom-console` package built + `twine check` passed; installs clean and provides
       the `opsroom` command (verified in a fresh venv from the local wheel)
 - [x] Social preview card uploaded, topics set, demo GIF + screenshots in README
