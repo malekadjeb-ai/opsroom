@@ -137,7 +137,7 @@ def main():
         # v0.6.2: the dashboard one-move surfaces on the venture it NAMES, so the NOW
         # hero and that venture's DO-NEXT never disagree
         named = state.next_actions({**s, "one_move": "push the acme launch today"})["acme"]
-        check("top-move on named venture", any(a.startswith("▶ TOP MOVE") for a in named), named)
+        check("top-move on named venture", any(a.startswith("TOP MOVE") for a in named), named)
         check("top-move absent when unnamed",
               not any("TOP MOVE" in a for a in s["next"]["acme"]), s["next"]["acme"])
         check("trap frozen", s["next"]["sideq"][0].startswith("FROZEN"))

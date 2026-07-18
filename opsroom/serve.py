@@ -22,7 +22,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import contextpack, db, enrich, inbox, ops, promises, state, ventures, views
+from . import contextpack, db, enrich, inbox, ops, promises, sessions, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -65,7 +65,7 @@ def _page(search_q=None) -> bytes:
             "replies": inbox.open_replies(ocon),
             "missed_calls": int(ops.kv_get(ocon, "missed_calls", "0") or 0),
             "spend_total": ops.spend_total(ocon), "spend_entries": ops.spend_entries(ocon),
-            "roi": ops.roi_rows(ocon),
+            "roi": ops.roi_rows(ocon), "sessions": sessions.summary(),
         }
         search_ctx = None
         if search_q is not None:

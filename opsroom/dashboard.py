@@ -184,72 +184,149 @@ def _f(token, fields: dict, label: str, cls: str = "btn small", confirm: str = "
             f"<button class='{cls}'>{esc(label)}</button></form>")
 
 
-def _serve_now_block(sx) -> str:
-    """Promises (anti-leak) + DUE follow-ups + today's tape + quick log + capture + leads."""
+def _momentum_strip(st, sx, cash, goal, days):
+    """A single honest pace line: today's collected vs what today needs to hit goal.
+    Not a vanity metric — it's the number that says 'are you on track today'."""
+    if not goal:
+        return ""
+    today_cash = int((sx.get("tape") or {}).get("cash") or 0)
+    remaining = max(0, goal - cash)
+    need_day = round(remaining / days) if days and days > 0 else remaining
+    pct = min(100, round(100 * today_cash / need_day)) if need_day else (100 if today_cash else 0)
+    cls = "go" if pct >= 100 else ("warn" if pct >= 40 else "leak")
+    label = (f"${today_cash:,} collected today of ${need_day:,} needed"
+             if need_day else f"${today_cash:,} collected today — goal already met")
+    return (f"<div class='mo'><div class='mo-head'><span>TODAY'S PACE</span>"
+            f"<b class='{cls}'>{pct}%</b></div>"
+            f"<div class='mo-bar'><i style='width:{pct}%' class='{cls}'></i></div>"
+            f"<div class='mo-lbl'>{esc(label)}</div></div>")
+
+
+def _sessions_strip(sess) -> str:
+    """Live agent sessions — what's running right now, cowork/background flagged. Answers
+    'is an agent working for me on this venture' without leaving the console."""
+    if not sess or not sess.get("rows"):
+        return ""
+    chips = ""
+    for s in sess["rows"][:6]:
+        vlabel = ventures.VENTURES.get(s["venture"], {}).get("label", s["venture"])
+        dot = "cowork" if s["is_cowork"] else "int"
+        busy = "busy" if s["status"] == "busy" else ""
+        chips += (f"<span class='sess {dot} {busy}'><b>{esc(s['name'])}</b>"
+                  f"<span>{esc(s['kind'])} · {esc(vlabel)} · {s['age_min']}m</span></span>")
+    co = sess.get("cowork", 0)
+    head = (f"{sess['live']} live" + (f" · <b class='go'>{co} cowork</b>" if co else ""))
+    return (f"<div class='card sessions'><div class='cardhead'>"
+            f"<h3>🟢 AGENTS RUNNING — {head}</h3></div><div class='sess-row'>{chips}</div></div>")
+
+
+def _stack_row(tag, tagcls, title, sub, buttons):
+    """One row in the unified DO NOW stack: a source tag, the action, inline buttons."""
+    sub_html = f"<div class='ar-sub'>{sub}</div>" if sub else ""
+    return (f"<div class='ar'><span class='ar-tag {tagcls}'>{esc(tag)}</span>"
+            f"<div class='ar-body'><div class='ar-title'>{title}</div>{sub_html}</div>"
+            f"<div class='ar-acts'>{buttons}</div></div>")
+
+
+def _do_now_stack(sx, st, tok) -> str:
+    """THE surface: one money-ranked list of everything worth doing right now, each
+    row DOable inline. Replaces the old pile of separate reply/due/send/call/leads/
+    promise cards — the operator reads top-to-bottom, not hunting across blocks."""
+    items = []  # (score, html_row)
+
+    # hottest: someone replied
+    for r in sx.get("replies", []):
+        who = r["from_name"] or r["from_email"] or r["target"] or "?"
+        draft = f"<a class='btn small' href='{esc(draft_url(r['venture'] or '', who, r['snippet'] or ''))}'>✍ draft</a>"
+        btns = draft + _f(tok, {"do": "reply", "rid": r["id"], "op": "handled"}, "✓ done", "btn small gray") \
+            + _f(tok, {"do": "reply", "rid": r["id"], "op": "dismiss"}, "×", "btn small gray")
+        sub = esc(r["subject"] or "") + (f" · “{esc((r['snippet'] or '')[:80])}”" if r["snippet"] else "")
+        items.append((100, _stack_row("REPLIED", "hot", f"{esc(who)} replied — call or answer",
+                                      f"{esc(r['venture'] or '')} · {sub}", btns)))
+
+    # the operator's single top move
+    if st.get("one_move"):
+        btns = f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it</a>"
+        items.append((92, _stack_row("TOP MOVE", "go", _linkify(esc(st["one_move"])), "", btns)))
+
+    # due follow-ups — the thread dies if you miss these
+    for r in sx["due"]:
+        task = f"Follow up with {r['target']}" + (f" — {r['note']}" if r["note"] else "")
+        btns = f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or ''))}'>▶</a>" \
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done") \
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
+        items.append((88, _stack_row("FOLLOW UP", "warn", f"Call {esc(r['target'])}",
+                                     f"{esc(r['venture'] or '')} · due {esc(r['due'])}", btns)))
+
+    # aged/open leads — one summarized action, not 198 rows
+    if st.get("leads_n"):
+        aged = (st.get("leads_age") or 0) >= 7
+        vk = st.get("leads_venture") or ""
+        btns = (f"<a class='btn small' href='#leadwork'>work them →</a>"
+                f"<a class='btn small gray' href='{esc(do_url(f'Call the open leads newest first for {vk}', vk))}'>▶</a>")
+        items.append((84 if aged else 62, _stack_row(
+            "LEADS", "warn" if aged else "cool",
+            f"~{st['leads_n']} open leads — call newest first",
+            (f"aged ~{st['leads_age']}d — paid-for money going cold" if aged else "keep the queue warm"),
+            btns)))
+
+    # staged drafts to send, and phone-first targets, from your trackers
+    send, call = _queues(st)
+    for r in send:
+        btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
+        items.append((74, _stack_row("SEND", "go", f"Send → {esc(r['target'])}",
+                                     f"{esc(r['channel'])} · {_linkify(esc(r['next'] or 'day-3 call'))}", btns)))
+    for r in call:
+        m = PHONE.search(r["next"] or "")
+        tel = (f"<a class='btn small' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>📞 {esc(m.group(0))}</a>"
+               if m else f"<a class='btn small gray' href='{esc(do_url('Call ' + r['target']))}'>▶</a>")
+        items.append((70, _stack_row("CALL", "cool", f"Call {esc(r['target'])}",
+                                     _linkify(esc((r["next"] or "").split(',')[-1].strip()[:60])), tel)))
+
+    # promises an agent staged and parked on your go
+    for p in sx["promises"]:
+        btns = f"<a class='btn small gray' href='{esc(do_url(p['text'], p['venture'] or ''))}'>▶ do it</a>" \
+            + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓", "btn small gray") \
+            + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "×", "btn small gray")
+        items.append((56, _stack_row("STAGED", "dim", _linkify(esc(p["text"][:160])),
+                                     esc(p["venture"] or ""), btns)))
+
+    items.sort(key=lambda x: -x[0])
+    if not items:
+        return ("<div class='card'><h3>Nothing queued — you're clear</h3>"
+                "<p class='hint'>Log a touch or drop a lead below, or let the next sync surface "
+                "replies, follow-ups, and staged work.</p></div>")
+    rows = "".join(h for _, h in items)
+    return (f"<div class='card action stack'><div class='cardhead'>"
+            f"<h3>▶ DO NOW — {len(items)} ranked, most money first</h3></div>{rows}</div>")
+
+
+def _venture_of(r):
+    """Best-effort venture key for a tracker row (for the draft link)."""
+    for k, v in ventures.VENTURES.items():
+        if k != "unknown" and (v.get("target_table") and r.get("pipeline") == v["target_table"]):
+            return k
+    return ""
+
+
+def _serve_now_block(sx, st) -> str:
+    """The reorganized NOW: today's momentum tape, the single ranked DO NOW stack,
+    the LOG IT quick-actions, the inbox, and the full leads worklist (collapsed)."""
     tok = sx["token"]
     tape = sx["tape"]
     tape_html = (f"<div class='tape'><b>{tape['touches']}</b> touches · "
                  f"<b>{tape['calls']}</b> calls · <b>{tape['sends']}</b> sends · "
                  f"<b>${int(tape['cash']):,}</b> collected today</div>")
-    # REPLIED — a live reply is the hottest thing on the board; call these first
-    reply_rows = ""
-    for r in sx.get("replies", []):
-        who = r["from_name"] or r["from_email"] or r["target"] or "?"
-        safe_link = _safe_url(r["link"])
-        link = (f" <a href='{esc(safe_link)}' target='_blank' rel='noopener noreferrer'>open ↗</a>"
-                if safe_link else "")
-        snip = f"<div><small>“{esc((r['snippet'] or '')[:180])}”</small></div>" if r["snippet"] else ""
-        reply_rows += (
-            f"<tr><td><b>{esc(who)}</b> <span class='loop-meta'>{esc(r['venture'] or '')}"
-            f" · {esc((r['reply_date'] or '')[:10])}</span>"
-            f"<div><small>{esc(r['subject'] or '')}</small>{link}</div>{snip}</td>"
-            f"<td class='acts'>"
-            f"<a class='btn small' href='{esc(draft_url(r['venture'] or '', who, r['snippet'] or ''))}'>✍ draft</a>"
-            + _f(tok, {"do": "reply", "rid": r["id"], "op": "handled"}, "✓ handled", "btn small gray")
-            + _f(tok, {"do": "reply", "rid": r["id"], "op": "dismiss"}, "dismiss", "btn small gray")
-            + "</td></tr>")
-    replies_html = (f"<div class='card action'><div class='cardhead'>"
-                    f"<h3>🔥 REPLIED — {len(sx.get('replies', []))} to answer, call these first</h3></div>"
-                    f"<p class='hint'>A live reply is the hottest thing on the board — it's already "
-                    f"on the tape; your next punch is the call (or the drafted reply).</p>"
-                    f"<table>{reply_rows}</table></div>" if sx.get("replies") else "")
     missed_html = ""
     if sx.get("missed_calls"):
         missed_html = (f"<div class='banner bad'>☎ {sx['missed_calls']} missed calls in the last "
                        f"lead drop — numberless notifications; only your lead source shows who called."
                        + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray") + "</div>")
-    # PROMISES — what an agent staged and is still waiting on you
-    prom_rows = "".join(
-        f"<tr><td><b>{esc(p['venture'] or '?')}</b> "
-        f"<span class='loop-meta'>{esc((p['ts'] or '')[:10])}</span>"
-        f"<div>{esc(p['text'])}</div></td><td class='acts'>"
-        + f"<a class='btn small gray' href='{esc(do_url(p['text'], p['venture'] or ''))}'>▶</a>"
-        + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓ done")
-        + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "dismiss", "btn small gray")
-        + "</td></tr>" for p in sx["promises"])
-    prom_html = (f"<div class='card'><div class='cardhead'>"
-                 f"<h3>🔒 PROMISES — {len(sx['promises'])} staged, waiting on you</h3></div>"
-                 f"<p class='hint'>Lines an agent staged and parked on your go — money dies in "
-                 f"scrollback. Cleared when you act.</p><table>{prom_rows}</table></div>"
-                 if sx["promises"] else "")
-    due_rows = ""
-    for r in sx["due"]:
-        task = f"Follow up with {r['target']}" + (f" — {r['note']}" if r["note"] else "")
-        due_rows += (
-            f"<tr><td><b>{esc(r['target'])}</b><br><small>{esc(r['venture'] or '')} · "
-            f"{esc(r['note'] or '')} · due {esc(r['due'])}</small></td><td class='acts'>"
-            f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or ''))}'>▶</a>"
-            + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done")
-            + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
-            + _f(tok, {"do": "followup", "fid": r["id"], "op": "drop"}, "drop", "btn small gray")
-            + "</td></tr>")
-    due_html = (f"<div class='card action'><div class='cardhead'>"
-                f"<h3>⏰ DUE — {len(sx['due'])} follow-ups</h3></div><table>{due_rows}</table></div>"
-                if sx["due"] else "")
+    stack = _do_now_stack(sx, st, tok)
     vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
                     for k, v in ventures.VENTURES.items() if k != "unknown")
-    quick = f"""<div class="card"><div class="cardhead"><h3>✍️ LOG IT — every touch schedules its day-3 follow-up</h3>
-<a class="btn small gray" href="/draft">✍ draft a reply</a></div>
+    quick = f"""<details class="card logit"><summary>✍️ LOG IT — record a touch, cash, or lead (every touch schedules its day-3 follow-up)</summary>
+<div class="cardhead"><a class="btn small gray" href="/draft">✍ draft a reply</a></div>
 <form class="row" method="post" action="/act">
 <input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="touch">
 <select name="venture">{vopts}</select>
@@ -273,7 +350,7 @@ def _serve_now_block(sx) -> str:
 <form class="row" method="post" action="/act">
 <input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="capture">
 <input name="text" placeholder="capture a thought → inbox (file it later)" required>
-<button class="btn small gray">drop it</button></form></div>"""
+<button class="btn small gray">drop it</button></form></details>"""
     cap_rows = "".join(
         f"<tr><td>{esc(c['text'])}</td><td class='acts'>"
         + _f(tok, {"do": "capture_set", "cid": c["id"], "op": "file"}, "filed", "btn small gray")
@@ -285,7 +362,7 @@ def _serve_now_block(sx) -> str:
         f"{esc(r['service'] or '')} · {esc(r['status'])}"
         f"{' · quoted $' + format(int(r['quoted']), ',') if r['quoted'] else ''}</small></td>"
         f"<td class='acts'>"
-        f"<a class='btn small gray' href='{esc(draft_url('', r['name']))}'>✍</a>"
+        f"<a class='btn small gray' href='{esc(draft_url(r['venture'] or '', r['name']))}'>✍</a>"
         + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called"}, "☎ called")
         + f"""<form class='inline' method='post' action='/act'>
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
@@ -297,10 +374,10 @@ def _serve_now_block(sx) -> str:
     n_leads = len(sx["leads"])
     more = (f"<p class='hint'>showing the 20 oldest of {n_leads} — "
             f"<a href='/search?q='>search</a> to find a specific lead</p>" if n_leads > 20 else "")
-    leads_html = (f"<div class='card'><div class='cardhead'>"
-                  f"<h3>📇 LEADS — {n_leads} open (oldest touch first)</h3></div>"
-                  f"<table>{lead_rows}</table>{more}</div>" if sx["leads"] else "")
-    return replies_html + missed_html + prom_html + due_html + tape_html + quick + cap_html + leads_html
+    leads_html = (f"<details class='card' id='leadwork'><summary>📇 LEADS worklist — "
+                  f"{n_leads} open (oldest touch first)</summary>"
+                  f"<table>{lead_rows}</table>{more}</details>" if sx["leads"] else "")
+    return missed_html + tape_html + stack + quick + cap_html + leads_html
 
 
 def draft_url(venture: str, name: str = "", msg: str = "") -> str:
@@ -638,11 +715,17 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
                       "your pipeline trackers (TOUCH LOG tables) and dashboard note — run "
                       "<b>opsroom init</b> to wire yours up, or <b>opsroom demo</b> to see a loaded "
                       "console.</p></div>")
-    serve_now = _serve_now_block(serve_ctx) if serve_ctx else ""
-    if serve_ctx and (serve_ctx["due"] or serve_ctx["leads"]):
-        empty_hint = ""
-    now_tab = ribbon + leak + hero + serve_now + send_html + call_html + leads_html + empty_hint + (
-        f"<p>{stale}</p>" if stale else "")
+    if serve_ctx:
+        # LIVE: one ranked stack does the work; momentum + live sessions sit above it.
+        momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
+        sess_strip = _sessions_strip(serve_ctx.get("sessions"))
+        now_tab = (ribbon + leak + momentum + sess_strip
+                   + _serve_now_block(serve_ctx, st)
+                   + (f"<p>{stale}</p>" if stale else ""))
+    else:
+        # STATIC snapshot (opsroom dash): the classic hero + queues, no write-backs.
+        now_tab = ribbon + leak + hero + send_html + call_html + leads_html + empty_hint + (
+            f"<p>{stale}</p>" if stale else "")
 
     # ---------- VENTURES ----------
     rev_cards, trap_rows, trap_min, details_pages = "", "", 0, ""
@@ -976,6 +1059,48 @@ input.amt{{width:76px;background:var(--bg2);border:1px solid var(--line);border-
 .tape{{display:flex;gap:20px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);
   border-radius:12px;padding:13px 16px;margin:13px 0;color:var(--dim);font-size:13px}}
 .tape b{{color:var(--ink);font-family:var(--mono);font-size:16px;font-weight:600;margin-right:3px}}
+
+/* momentum pace strip */
+.mo{{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px 16px;margin:13px 0}}
+.mo-head{{display:flex;justify-content:space-between;align-items:baseline}}
+.mo-head span{{font:600 10.5px var(--mono);letter-spacing:.08em;color:var(--faint)}}
+.mo-head b{{font:600 17px var(--mono)}}
+.mo-bar{{height:8px;border-radius:5px;background:var(--bg2);border:1px solid var(--line);margin:8px 0 6px;overflow:hidden}}
+.mo-bar i{{display:block;height:100%;border-radius:5px;transition:width .6s cubic-bezier(.16,1,.3,1)}}
+.mo-bar i.go{{background:var(--go)}} .mo-bar i.warn{{background:var(--warn)}} .mo-bar i.leak{{background:var(--leak)}}
+.mo-lbl{{font-size:13px;color:var(--dim)}}
+.go{{color:var(--go)}} .warn{{color:var(--warn)}} .leak{{color:var(--leak)}}
+
+/* live agent sessions */
+.sessions .sess-row{{display:flex;gap:9px;flex-wrap:wrap}}
+.sess{{display:flex;flex-direction:column;gap:1px;border:1px solid var(--line);border-radius:9px;
+  padding:7px 11px;background:var(--bg2);min-width:150px}}
+.sess b{{font-size:13px;color:var(--ink)}}
+.sess span{{font:11px var(--mono);color:var(--faint)}}
+.sess.cowork{{border-color:var(--go-line)}} .sess.cowork b{{color:var(--go)}}
+.sess.busy{{position:relative}}
+.sess.busy::after{{content:"";position:absolute;top:8px;right:9px;width:6px;height:6px;border-radius:50%;
+  background:var(--go);box-shadow:0 0 0 0 var(--go-line);animation:pulse 2s infinite}}
+
+/* DO NOW ranked stack — one row per action, tag + body + inline buttons */
+.stack{{padding:6px 0 4px}}
+.stack .cardhead{{padding:9px 16px 4px}}
+.ar{{display:flex;gap:12px;align-items:center;padding:11px 16px;border-top:1px solid var(--line)}}
+.ar:hover{{background:var(--surface2)}}
+.ar-tag{{flex:none;width:74px;font:700 10px/1.5 var(--mono);letter-spacing:.05em;text-align:center;
+  border-radius:6px;padding:4px 0;background:var(--surface2);color:var(--dim)}}
+.ar-tag.hot{{background:var(--leak-dim);color:#ff9b95}} .ar-tag.go{{background:var(--go-dim);color:var(--go)}}
+.ar-tag.warn{{background:var(--warn-dim);color:var(--warn)}} .ar-tag.cool{{background:rgba(89,193,240,.12);color:var(--cool)}}
+.ar-tag.dim{{background:var(--surface2);color:var(--faint)}}
+.ar-body{{flex:1;min-width:0}}
+.ar-title{{color:var(--ink);font-size:14px;font-weight:600;line-height:1.35}}
+.ar-sub{{color:var(--dim);font-size:12.5px;margin-top:1px;overflow:hidden;text-overflow:ellipsis}}
+.ar-acts{{flex:none;display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end}}
+details.logit{{padding:12px 16px}} details.logit summary{{cursor:pointer;color:var(--ink);font-weight:600;font-size:14px}}
+details.logit summary:hover{{color:var(--go)}}
+@media (max-width:600px){{
+  .ar{{flex-wrap:wrap}} .ar-acts{{width:100%;justify-content:flex-start;margin-top:4px}}
+}}
 
 footer{{color:var(--faint);font-size:12px;text-align:center;margin:28px auto 0;
   display:flex;gap:7px;justify-content:center;align-items:center;flex-wrap:wrap}}

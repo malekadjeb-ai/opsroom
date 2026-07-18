@@ -24,7 +24,7 @@ opsroom sync && opsroom dash
 
 ## What you get
 
-**🎯 NOW — an action queue, not a report.** Drafts staged in your outreach tracker become a send list with an open-your-drafts button. Phone-first targets become tap-to-dial links. Stale leads become a rescue block. The single highest cash action sits on top, pulled from your own dashboard note.
+**🎯 NOW — one ranked action stack.** Everything worth doing — a live reply, a due follow-up, the top move, staged drafts, phone-first targets, aged leads, an agent's staged promise — collapses into a single list, money-ranked, most-important first. Every row is DOable in place: draft the reply, tap-to-dial the number, dispatch it to an agent, mark it done. No hunting across tabs. Above it: today's pace (collected vs what today needs) and a live view of which AI agents are running right now.
 
 ![opsroom console — the NOW action queue](https://raw.githubusercontent.com/malekadjeb-ai/opsroom/main/docs/launch/console-now.png)
 
@@ -35,6 +35,8 @@ opsroom sync && opsroom dash
 **⌕ SEARCH — one box over everything.** Type once in the live console and hit sessions, commits, decisions, leads, touches, and your inbox in the same result list. Full-text search over the activity ledger, literal match over the operator ledgers, all local.
 
 **✍ DRAFT — the reply, written for you, on your rails.** Paste an inbound message and get a rails-correct draft built from the one-line `offer` you set per venture in config. Deterministic and local — no LLM call, and the drafter never quotes a number from the inbound message, only your canon prices. Edit, copy, log the send in one tap (which schedules the day-3 follow-up).
+
+**🟢 AGENTS RUNNING — see your live sessions, cowork and all.** opsroom reads which Claude Code sessions are alive right now (interactive, cowork, background), attributes each to a venture, and flags the cowork/background ones — so you can see an agent working for you on a venture as it happens, not just after the fact in the rollup.
 
 **▶ DO IT — every action becomes a hand-off, and your agents close the loop.** opsroom reads what your AI agents did all day; now it writes back. Every queued action — the top cash move, a DO NEXT step, a due follow-up, a staged promise — gets a ▶ button that opens the full work brief: the task, your config rails, and the live operator context. Copy it into any AI chat, or opt in (`[agent] enabled = true` in config) and one tap launches your local agent CLI (e.g. `claude -p`) on the brief, detached, logged locally. The command comes only from your config, the brief is passed as a single argument, and it's off by default.
 

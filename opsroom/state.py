@@ -310,7 +310,7 @@ def next_actions(state):
         one_move = state.get("one_move")
         if one_move and key in ventures.attribute_text_all(one_move):
             pos = 1 if (a and a[0].startswith("UNBLOCK FIRST")) else 0
-            a.insert(pos, f"▶ TOP MOVE: {one_move}")
+            a.insert(pos, f"TOP MOVE — {one_move}")
         a += meta.get("playbook", [])
         acts[key] = a or ["No queued actions — check the tracker or add playbook lines in config"]
     return acts

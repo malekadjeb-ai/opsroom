@@ -133,6 +133,17 @@ def main():
         assert b"<script>alert(1)</script>" not in page, "draft echo unescaped"
         assert b"Hi Sam," in page, "draft not generated"
 
+        # v0.7.0 reorg: the NOW tab is one ranked DO NOW stack, and the page's <div>s
+        # must balance (a stray close leaks NOW content onto every other tab).
+        page = urllib.request.urlopen(base + "/", timeout=5).read().decode()
+        assert "DO NOW —" in page, "ranked action stack missing"
+        assert page.count("<div") == page.count("</div>"), \
+            f"div imbalance: {page.count('<div')} open vs {page.count('</div>')} close"
+        # the panel that holds NOW must actually close before the ventures panel opens
+        i_now = page.find('id="now"')
+        i_ventures = page.find('id="ventures"')
+        assert 0 < i_now < i_ventures, "panel ordering broken"
+
         # unknown action + oversized body rejected
         code, _ = post(base + "/act", {"do": "nuke", "token": serve.TOKEN})
         assert code == 400
