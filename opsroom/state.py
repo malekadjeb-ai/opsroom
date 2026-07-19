@@ -22,7 +22,7 @@ from . import config, enrich, ventures
 FM = re.compile(r"\A---\n(.*?)\n---", re.S)
 FM_FIELD = re.compile(r"^(type|updated)\s*:\s*(.+)$", re.M)
 
-_MONEY = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)\s*([KkMm])?")
+_MONEY = re.compile(r"\$?\s*([\d,]+(?:\.\d+)?)\s*([KkMm])?")  # $ optional: "Cash | 24,000" is still money
 _AGED = re.compile(r"aged\s*~?\s*(\d+)\s*d", re.I)
 _DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
@@ -222,7 +222,8 @@ def pipeline_status():
             rows.append({"target": cells[0],
                          "channel": cells[1] if len(cells) > 1 else "",
                          "status": cells[2] if len(cells) > 2 else "",
-                         "next": cells[3] if len(cells) > 3 else ""})
+                         "next": cells[3] if len(cells) > 3 else "",
+                         "pipeline": f.stem})
         out.append({"name": f.stem, "path": str(f), "age_days": age,
                     "totals": totals, "touches": touches, "rows": rows,
                     "tables": parse_md_tables(text)})
@@ -349,7 +350,10 @@ def venture_rollup(con):
 
 def db_enrichment(con):
     """Activity context from opsroom's own ledger."""
-    day = datetime.now(timezone.utc).date().isoformat()
+    # "today" is the operator's local day; sessions store UTC timestamps
+    local_midnight = datetime.now().astimezone().replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    day = local_midnight.astimezone(timezone.utc).isoformat()
     sess = con.execute(
         """SELECT venture, COUNT(*) n, COALESCE(SUM(duration_min),0) m FROM sessions
            WHERE started_at >= ? GROUP BY venture ORDER BY m DESC""", (day,)).fetchall()
@@ -373,10 +377,14 @@ def build_state(con) -> dict:
     if parsed:
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps(
+            # atomic replace: concurrent page renders must never interleave writes
+            # into the very file degraded mode depends on
+            tmp = cache.with_name(cache.name + ".tmp")
+            tmp.write_text(json.dumps(
                 {"cached_at": datetime.now(timezone.utc).isoformat(),
                  "dashboard": parsed, "history": history}))
-            cache.chmod(0o600)
+            tmp.chmod(0o600)
+            os.replace(tmp, cache)
         except OSError:
             pass
     else:

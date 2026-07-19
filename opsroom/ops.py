@@ -243,9 +243,10 @@ def roi_rows(con) -> list:
 
 
 def leads_open(con) -> list:
+    # newest first: speed-to-lead wins, and it matches the DO NOW row's story
     return con.execute(
         """SELECT * FROM leads WHERE status IN ('open','working')
-           ORDER BY COALESCE(last_touch, added)""").fetchall()
+           ORDER BY COALESCE(last_touch, added) DESC""").fetchall()
 
 
 def touches_recent(con, limit: int = 25) -> list:

@@ -103,10 +103,13 @@ def merge_leads(ocon, parsed: dict) -> dict:
                      venture=(ld.get("venture") or "")[:40])
         have.add(_digits(phone))
         added += 1
+    try:
+        missed = int(parsed.get("missed_calls") or 0)
+    except (TypeError, ValueError):
+        missed = 0  # a junk value must not turn into an every-tick retry loop
     if "missed_calls" in parsed:
-        ops.kv_set(ocon, "missed_calls", str(int(parsed.get("missed_calls") or 0)))
-    return {"added": added, "skipped": skipped,
-            "missed_calls": int(parsed.get("missed_calls") or 0)}
+        ops.kv_set(ocon, "missed_calls", str(missed))
+    return {"added": added, "skipped": skipped, "missed_calls": missed}
 
 
 # ---------------------------------------------------------------- replies
@@ -211,7 +214,17 @@ def watch_tick(ocon) -> bool:
             mt = path.stat().st_mtime
         except OSError:
             continue
-        if _MTIMES.get(str(path)) == mt:
+        seen = _MTIMES.get(str(path))
+        if seen is None:
+            # survive restarts: without a persisted mtime the first tick after every
+            # reboot re-imports the drop and resurrects cleared missed-calls
+            v = ops.kv_get(ocon, f"drop_mtime:{path.name}", "")
+            try:
+                seen = float(v) if v else None
+            except ValueError:
+                seen = None
+        if seen == mt:
+            _MTIMES[str(path)] = mt
             continue
         try:
             r = imp(ocon, path)
@@ -220,5 +233,6 @@ def watch_tick(ocon) -> bool:
         if r.get("error"):
             continue  # bad JSON: don't mark seen, retry when the file is rewritten
         _MTIMES[str(path)] = mt
+        ops.kv_set(ocon, f"drop_mtime:{path.name}", repr(mt))
         changed = changed or bool(r.get("added"))
     return changed

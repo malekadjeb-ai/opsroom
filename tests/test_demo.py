@@ -14,7 +14,7 @@ def main():
         os.environ["OPSROOM_DATA_DIR"] = str(Path(td) / "base")
         os.environ["OPSROOM_NO_OPEN"] = "1"
         from opsroom import demo
-        rc = demo.run()
+        rc = demo.run(serve_console=False)
         assert rc == 0
         html = (Path(os.environ["OPSROOM_DATA_DIR"]) / "console.html")
         text = html.read_text()
@@ -23,7 +23,23 @@ def main():
                        "Trap zone", "decisions log"):
             assert needle in text, f"missing: {needle}"
         assert "src=" not in text and "fetch(" not in text
-    print("demo gate: console builds with all sections")
+
+        # the PRODUCT is the live console: serve the seeded portfolio and prove the
+        # demo shows a loaded, read-WRITE operator surface, not a static snapshot
+        import threading
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        from opsroom import serve
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        live = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5).read().decode()
+        httpd.shutdown()
+        for needle in ("DO NOW", "$8,250", "Dana Reyes", "LEADS worklist — 5 open",
+                       "TODAY'S PACE", "Summit Fabrication"):
+            assert needle in live, f"live demo missing: {needle}"
+        assert live.count("<form") >= 10, "live demo must be read-WRITE, not words on a screen"
+    print("demo gate: static console + live served demo with a seeded ledger")
     return 0
 
 

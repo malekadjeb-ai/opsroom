@@ -113,6 +113,7 @@ def connect() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
+    con.execute("PRAGMA busy_timeout=15000")  # a sync tick must not 500 a concurrent write
     con.executescript(SCHEMA)
     con.row_factory = sqlite3.Row
     enforce_perms()

@@ -16,8 +16,11 @@ def _bar(pct, width=18):
 
 
 def _day_bounds(offset=0):
-    d = datetime.now(timezone.utc).date() - timedelta(days=offset)
-    return d.isoformat(), (d + timedelta(days=1)).isoformat()
+    """Local calendar day expressed as UTC bounds — 'today' means the operator's
+    today, not UTC's (which flips mid-evening in the US)."""
+    local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    start = (local - timedelta(days=offset)).astimezone(timezone.utc)
+    return start.isoformat(), (start + timedelta(days=1)).isoformat()
 
 
 def today(con, offset=0):

@@ -17,9 +17,9 @@ No cloud. No accounts. No dependencies. One Python package, one SQLite file on y
 
 ```
 pipx install opsroom-console   # or: pip install opsroom-console / uv tool install opsroom-console
-opsroom demo             # see a fully loaded console in 10 seconds (fictional data)
+opsroom demo             # a fully loaded LIVE console in 10 seconds (fictional data)
 opsroom init             # wire up YOUR repos, goal, and notes
-opsroom sync && opsroom dash
+opsroom serve            # your console: live, writable, auto-refreshing
 ```
 
 ## What you get
@@ -123,7 +123,7 @@ Built during a 23-day cash sprint by an operator running eight ventures, out of 
 
 ```
 git clone https://github.com/malekadjeb-ai/opsroom && cd opsroom
-for t in tests/test_*.py; do python3 "$t" || break; done   # seven gates, all must exit 0
+for t in tests/test_*.py; do python3 "$t" || break; done   # every gate must exit 0
 python3 -m opsroom.cli demo
 ```
 

@@ -4,6 +4,7 @@ deep links (tel:, your mail drafts, your leads dashboard, target websites) are
 deliberate — they turn data into one-tap actions. All notes/pipeline-derived text is
 html-escaped."""
 import html
+import math
 import re
 import urllib.parse
 from datetime import datetime, timezone
@@ -174,6 +175,15 @@ def _queues(st):
     return send, call
 
 
+def _vopts(selected: str = "") -> str:
+    """Venture <option>s for the write forms. A fresh install (zero ventures) gets a
+    labelled placeholder instead of a silent empty dropdown that looks broken."""
+    opts = "".join(
+        f"<option value='{esc(k)}'{' selected' if k == selected else ''}>{esc(v['label'])}</option>"
+        for k, v in ventures.VENTURES.items() if k != "unknown")
+    return opts or "<option value='' disabled selected>— add ventures: opsroom init —</option>"
+
+
 def _f(token, fields: dict, label: str, cls: str = "btn small", confirm: str = "") -> str:
     """One inline POST /act form. All values are server-generated or numeric ids."""
     hidden = "".join(f"<input type='hidden' name='{esc(str(k))}' value='{esc(str(v))}'>"
@@ -191,7 +201,8 @@ def _momentum_strip(st, sx, cash, goal, days):
         return ""
     today_cash = int((sx.get("tape") or {}).get("cash") or 0)
     remaining = max(0, goal - cash)
-    need_day = round(remaining / days) if days and days > 0 else remaining
+    # ceil, not round: $10 left over 90 days must read "need $1/day", never "goal met"
+    need_day = math.ceil(remaining / days) if days and days > 0 else remaining
     pct = min(100, round(100 * today_cash / need_day)) if need_day else (100 if today_cash else 0)
     cls = "go" if pct >= 100 else ("warn" if pct >= 40 else "leak")
     label = (f"${today_cash:,} collected today of ${need_day:,} needed"
@@ -202,20 +213,27 @@ def _momentum_strip(st, sx, cash, goal, days):
             f"<div class='mo-lbl'>{esc(label)}</div></div>")
 
 
-def _sessions_strip(sess) -> str:
+def _sessions_strip(sess, dispatches=None) -> str:
     """Live agent sessions — what's running right now, cowork/background flagged. Answers
-    'is an agent working for me on this venture' without leaving the console."""
-    if not sess or not sess.get("rows"):
+    'is an agent working for me on this venture' without leaving the console. Console
+    dispatches show here too: work YOU launched from a ▶ button, with a live link."""
+    dispatches = dispatches or []
+    if not (sess and sess.get("rows")) and not dispatches:
         return ""
     chips = ""
-    for s in sess["rows"][:6]:
+    for d in dispatches[:4]:
+        chips += (f"<a class='sess cowork busy' href='{esc(do_url(d['task'][:200]))}"
+                  f"&launched={esc(d['ts'])}' style='text-decoration:none'>"
+                  f"<b>🤖 dispatched</b><span>{esc(d['task'][:60]) or 'brief'} · running</span></a>")
+    for s in (sess.get("rows") if sess else [])[:6]:
         vlabel = ventures.VENTURES.get(s["venture"], {}).get("label", s["venture"])
         dot = "cowork" if s["is_cowork"] else "int"
         busy = "busy" if s["status"] == "busy" else ""
         chips += (f"<span class='sess {dot} {busy}'><b>{esc(s['name'])}</b>"
                   f"<span>{esc(s['kind'])} · {esc(vlabel)} · {s['age_min']}m</span></span>")
-    co = sess.get("cowork", 0)
-    head = (f"{sess['live']} live" + (f" · <b class='go'>{co} cowork</b>" if co else ""))
+    co = (sess or {}).get("cowork", 0)
+    live = ((sess or {}).get("live") or 0) + len(dispatches)
+    head = (f"{live} live" + (f" · <b class='go'>{co} cowork</b>" if co else ""))
     return (f"<div class='card sessions'><div class='cardhead'>"
             f"<h3>🟢 AGENTS RUNNING — {head}</h3></div><div class='sess-row'>{chips}</div></div>")
 
@@ -258,22 +276,39 @@ def _do_now_stack(sx, st, tok) -> str:
         items.append((88, _stack_row("FOLLOW UP", "warn", f"Call {esc(r['target'])}",
                                      f"{esc(r['venture'] or '')} · due {esc(r['due'])}", btns)))
 
-    # aged/open leads — one summarized action, not 198 rows
-    if st.get("leads_n"):
-        aged = (st.get("leads_age") or 0) >= 7
-        vk = st.get("leads_venture") or ""
+    # aged/open leads — one summarized action, not 198 rows. Driven by the ops
+    # ledger (the rows the button actually works), never the dashboard note.
+    leads = list(sx.get("leads") or [])
+    if leads:
+        newest = max((r["last_touch"] or r["added"] or "") for r in leads)
+        try:
+            age = (datetime.now().astimezone().date()
+                   - datetime.fromisoformat(newest[:10]).date()).days
+        except ValueError:
+            age = 0
+        aged = age >= 7
+        vents = [r["venture"] for r in leads if r["venture"]]
+        vk = max(set(vents), key=vents.count) if vents else ""
         btns = (f"<a class='btn small' href='#leadwork'>work them →</a>"
-                f"<a class='btn small gray' href='{esc(do_url(f'Call the open leads newest first for {vk}', vk))}'>▶</a>")
+                f"<a class='btn small gray' href='{esc(do_url(('Call the open leads newest first' + (f' for {vk}' if vk else '')), vk))}'>▶</a>")
         items.append((84 if aged else 62, _stack_row(
             "LEADS", "warn" if aged else "cool",
-            f"~{st['leads_n']} open leads — call newest first",
-            (f"aged ~{st['leads_age']}d — paid-for money going cold" if aged else "keep the queue warm"),
+            f"{len(leads)} open leads — call newest first",
+            (f"~{age}d since the last touch — paid-for money going cold" if aged
+             else "keep the queue warm"),
             btns)))
 
     # staged drafts to send, and phone-first targets, from your trackers
     send, call = _queues(st)
     for r in send:
         btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
+        if "REPLIED" in (r["status"] or ""):
+            # a tracked target that replied is the hottest thing on the board,
+            # not a routine "send" — rank it just under the drop-file replies
+            items.append((90, _stack_row("REPLIED", "hot",
+                                         f"{esc(r['target'])} replied — answer now",
+                                         f"{esc(r['channel'])} · {_linkify(esc(r['next'] or ''))}", btns)))
+            continue
         items.append((74, _stack_row("SEND", "go", f"Send → {esc(r['target'])}",
                                      f"{esc(r['channel'])} · {_linkify(esc(r['next'] or 'day-3 call'))}", btns)))
     for r in call:
@@ -323,8 +358,7 @@ def _serve_now_block(sx, st) -> str:
                        f"lead drop — numberless notifications; only your lead source shows who called."
                        + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray") + "</div>")
     stack = _do_now_stack(sx, st, tok)
-    vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
-                    for k, v in ventures.VENTURES.items() if k != "unknown")
+    vopts = _vopts()
     quick = f"""<details class="card logit"><summary>✍️ LOG IT — record a touch, cash, or lead (every touch schedules its day-3 follow-up)</summary>
 <div class="cardhead"><a class="btn small gray" href="/draft">✍ draft a reply</a></div>
 <form class="row" method="post" action="/act">
@@ -372,10 +406,10 @@ def _serve_now_block(sx, st) -> str:
         + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "lost"}, "lost", "btn small gray")
         + "</td></tr>" for r in sx["leads"][:20])
     n_leads = len(sx["leads"])
-    more = (f"<p class='hint'>showing the 20 oldest of {n_leads} — "
-            f"<a href='/search?q='>search</a> to find a specific lead</p>" if n_leads > 20 else "")
+    more = (f"<p class='hint'>showing the 20 newest of {n_leads} — "
+            f"use the search box above to find a specific lead</p>" if n_leads > 20 else "")
     leads_html = (f"<details class='card' id='leadwork'><summary>📇 LEADS worklist — "
-                  f"{n_leads} open (oldest touch first)</summary>"
+                  f"{n_leads} open (newest first — speed to lead wins)</summary>"
                   f"<table>{lead_rows}</table>{more}</details>" if sx["leads"] else "")
     return missed_html + tape_html + stack + quick + cap_html + leads_html
 
@@ -389,8 +423,10 @@ def draft_url(venture: str, name: str = "", msg: str = "") -> str:
 DRAFT_CSS = """
 :root{--bg:#0a0b0d;--surface:#14161a;--line:#24272e;--ink:#eceef1;--dim:#9aa1ac;
   --faint:#6c727d;--go:#3ddc84;--go-dim:rgba(61,220,132,.13);--go-line:rgba(61,220,132,.32);
-  --cool:#59c1f0;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --cool:#59c1f0;--leak:#ff6b6b;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:20px;
+  padding:1px 8px;font-size:11px;color:var(--dim);white-space:nowrap}
 *{box-sizing:border-box}
 body{font:15px/1.55 var(--sans);color:var(--ink);background:var(--bg);margin:0;padding:18px}
 main{max-width:760px;margin:0 auto}
@@ -417,9 +453,7 @@ input:focus,select:focus,textarea:focus{outline:0;border-color:var(--go-line)}
 def draft_page(token, venture="", msg="", name="", draft=None):
     """The /draft page: paste an inbound message, get a rails-correct reply from
     your config (offer + draft_style), copy it, log the send in one tap."""
-    vopts = "".join(
-        f"<option value='{esc(k)}'{' selected' if k == venture else ''}>{esc(v['label'])}</option>"
-        for k, v in ventures.VENTURES.items() if k != "unknown")
+    vopts = _vopts(venture)
     result = ""
     if draft is not None:
         log_form = f"""<form method="post" action="/act">
@@ -462,30 +496,70 @@ def do_url(task: str, venture: str = "") -> str:
     return f"/do?{q}"
 
 
-def do_page(token, task, venture, brief, agent_on, result=None, history=None):
+def do_page(token, task, venture, brief, agent_on, result=None, history=None,
+            launched_ts=None):
     """The /do page: the work brief (task + rails + live context), copy it into any
-    agent, or one-tap dispatch to your configured local agent CLI."""
-    if result and result.get("launched"):
-        banner = (f"<div class='card' style='border-color:var(--go-line)'>"
-                  f"<b style='color:var(--go)'>🤖 dispatched.</b> Your agent is running it "
-                  f"detached — output logs to <code>{esc(result['log'])}</code>.</div>")
-    elif result:
-        banner = (f"<div class='card'><b>Brief written</b> to <code>{esc(result['brief'])}</code> "
-                  f"— agent launch is disabled. Enable it in config.toml:<br>"
-                  f"<code>[agent]</code><br><code>enabled = true</code><br>"
-                  f"<code>command = [\"claude\", \"-p\"]</code></div>")
-    else:
-        banner = ""
+    agent, or one-tap dispatch to your configured local agent CLI. A dispatched run
+    shows its live status and log tail — never fire-and-forget."""
+    from . import dispatch as _dispatch
+    banner = ""
+    live_status = ""
+    if launched_ts:
+        live_status = _dispatch.status(launched_ts)
+        if live_status == "running":
+            banner = (f"<div class='card' style='border-color:var(--go-line)'>"
+                      f"<b style='color:var(--go)'>🤖 dispatched — running now.</b> "
+                      f"This page refreshes itself until the agent finishes.</div>")
+        elif live_status == "done":
+            banner = (f"<div class='card' style='border-color:var(--go-line)'>"
+                      f"<b style='color:var(--go)'>✓ agent finished.</b> "
+                      f"Its output is in the history below.</div>")
+        elif live_status.startswith("exit"):
+            banner = (f"<div class='card'><b>⚠ agent ended with {esc(live_status)}.</b> "
+                      f"The log tail below has the details.</div>")
+        else:
+            banner = (f"<div class='card'><b>Brief written.</b> Agent launch is "
+                      f"disabled — copy the brief into any AI, or enable one-tap "
+                      f"launch in config.toml:<br><code>[agent]</code><br>"
+                      f"<code>enabled = true</code><br>"
+                      f"<code>command = [\"claude\", \"-p\"]</code></div>")
     send_btn = f"""<form method="post" action="/act" style="display:inline">
 <input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="do" value="dispatch">
 <input type="hidden" name="task" value="{esc(task)}"><input type="hidden" name="venture" value="{esc(venture)}">
 <button class="btn">{'🤖 send to your agent — runs it now' if agent_on else '🤖 write the brief file (agent launch disabled)'}</button></form>"""
-    hist_rows = "".join(
-        f"<tr><td>{esc(h['ts'])}</td><td>{esc(h['task'][:90])}</td>"
-        f"<td>{esc(h['log'] or '—')}</td></tr>" for h in (history or []))
-    hist = (f"<div class='card'><label>recent dispatches</label>"
-            f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{hist_rows}</table></div>"
+    def _chip(s):
+        if s == "running":
+            return "<span class='pill' style='color:var(--go)'>● running</span>"
+        if s == "done":
+            return "<span class='pill'>✓ done</span>"
+        if s.startswith("exit"):
+            return f"<span class='pill' style='color:var(--leak)'>⚠ {esc(s)}</span>"
+        return "<span class='pill'>brief only</span>"
+
+    any_running = False
+    hist_rows = []
+    for h in (history or []):
+        running_row = h["status"] == "running"
+        any_running = any_running or running_row
+        tail_html = ""
+        if h["tail"]:
+            # the freshest run stays expanded so a live tail reads like a terminal
+            openattr = " open" if (h["tsid"] == launched_ts or running_row) else ""
+            tail_html = (f"<details{openattr}><summary>log tail</summary>"
+                         f"<pre style='white-space:pre-wrap;font-size:12px;color:var(--dim);"
+                         f"max-height:260px;overflow:auto'>{esc(h['tail'])}</pre></details>")
+        elif h["status"] == "running":
+            tail_html = "<p class='hint'>no output yet…</p>"
+        hist_rows.append(
+            f"<tr><td style='white-space:nowrap'>{esc(h['ts'])}</td>"
+            f"<td>{_chip(h['status'])}</td>"
+            f"<td><b>{esc(h['task'][:90])}</b>{tail_html}</td></tr>")
+    hist = (f"<div class='card'><label>recent dispatches — live status</label>"
+            f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{''.join(hist_rows)}</table></div>"
             if hist_rows else "")
+    # live feedback loop: while anything runs, the page re-renders itself
+    refresh_js = ("<script>setTimeout(function(){location.reload()},4000)</script>"
+                  if (any_running or live_status == "running") else "")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DO IT · opsroom</title><style>{DRAFT_CSS}
@@ -511,6 +585,7 @@ function cp(){{var t=document.getElementById('out');t.select();
   var b=document.getElementById('cpbtn');b.textContent='✓ copied';
   setTimeout(function(){{b.textContent='⧉ copy brief'}},1200);}}
 </script>
+{refresh_js}
 </main></body></html>"""
 
 
@@ -557,8 +632,7 @@ def _ledger_cards(serve_ctx) -> str:
     """Cash ledger + spend ledger + per-venture ROI — the P&L surface. Independent
     of whether a goal is set, so 'no goal' never hides the money you've logged."""
     tok = serve_ctx["token"]
-    vopts = "".join(f"<option value='{esc(k)}'>{esc(v['label'])}</option>"
-                    for k, v in ventures.VENTURES.items() if k != "unknown")
+    vopts = _vopts()
     entry_rows = "".join(
         f"<tr><td>{esc(e['ts'][:10])}</td><td><b>${int(e['amount']):,}</b></td>"
         f"<td>{esc(e['venture'] or '')}</td><td>{esc(e['what'] or '')}</td></tr>"
@@ -647,7 +721,8 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
         cash = int(serve_ctx["cash_total"] or 0)
     cash_pct = min(100, round(100 * cash / goal)) if goal else 0
     send, call = _queues(st)
-    n_actions = len(send) + len(call) + (1 if st["leads_n"] else 0)
+    leads_n = len(serve_ctx["leads"]) if serve_ctx else (st["leads_n"] or 0)
+    n_actions = len(send) + len(call) + (1 if leads_n else 0)
 
     def _cell(num, lbl, cls=""):
         return (f"<div class='hud-cell'><span class='hud-num {cls}'>{num}</span>"
@@ -657,7 +732,7 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
                  if days is not None else _cell("—", "no goal set"))
     cash_cell = (_cell(f"${cash:,}", f"of {st['goal_label']}", "go")
                  if goal else _cell("—", "set a goal"))
-    lead_cell = _cell(f"{st['leads_n'] or 0}", "open leads",
+    lead_cell = _cell(f"{leads_n}", "open leads",
                       "warn" if (st['leads_age'] or 0) >= 7 else "")
     head_stats = (f"<div class='hud'>{days_cell}{cash_cell}{lead_cell}"
                   f"{_cell(f'{n_actions}', 'actions queued')}</div>")
@@ -718,7 +793,8 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
     if serve_ctx:
         # LIVE: one ranked stack does the work; momentum + live sessions sit above it.
         momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
-        sess_strip = _sessions_strip(serve_ctx.get("sessions"))
+        sess_strip = _sessions_strip(serve_ctx.get("sessions"),
+                                     serve_ctx.get("dispatches"))
         now_tab = (ribbon + leak + momentum + sess_strip
                    + _serve_now_block(serve_ctx, st)
                    + (f"<p>{stale}</p>" if stale else ""))
@@ -760,10 +836,10 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
     # ---------- MONEY ----------
     if goal:
         remaining = max(0, goal - cash)  # past the goal: nothing left to raise, not a negative
-        per_day = round(remaining / days) if days and days > 0 else remaining
+        per_day = math.ceil(remaining / days) if days and days > 0 else remaining
         band = (f"<p class='hint'>Honest band: <b>{esc(st['band'])}</b></p>"
                 if st.get("band") else "")
-        days_danger = "leak" if (days or 99) < 14 else ""
+        days_danger = "leak" if (days is not None and days < 14) else ""
         pl_cells = ""
         if serve_ctx:
             spent = int(serve_ctx.get("spend_total") or 0)

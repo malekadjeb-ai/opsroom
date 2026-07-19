@@ -22,7 +22,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import contextpack, db, enrich, inbox, ops, promises, sessions, state, ventures, views
+from . import contextpack, db, dispatch, enrich, inbox, ops, promises, sessions, state, \
+    ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -30,7 +31,8 @@ TOKEN = secrets.token_urlsafe(32)  # per-boot CSRF token; embedded in every form
 _REV = [1]
 _LOCK = threading.Lock()
 
-CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"
+CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+       "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 
 def _bump():
@@ -39,9 +41,15 @@ def _bump():
 
 
 def _money(v):
+    """Operator-typed amounts: '$4k' -> 4000, '1.5m' -> 1500000, '2,400' -> 2400,
+    '-100' -> -100 (refund). None when there's no number."""
     import re
-    m = re.search(r"([\d,]+(?:\.\d+)?)", v or "")
-    return float(m.group(1).replace(",", "")) if m else None
+    m = re.search(r"(-?)\s*\$?\s*([\d,]*\.?\d+)\s*([kKmM]?)\b", (v or "").strip())
+    if not m:
+        return None
+    val = float(m.group(2).replace(",", "") or 0)
+    val *= {"k": 1_000, "m": 1_000_000}.get(m.group(3).lower(), 1)
+    return -val if m.group(1) else val
 
 
 def _page(search_q=None) -> bytes:
@@ -66,6 +74,7 @@ def _page(search_q=None) -> bytes:
             "missed_calls": int(ops.kv_get(ocon, "missed_calls", "0") or 0),
             "spend_total": ops.spend_total(ocon), "spend_entries": ops.spend_entries(ocon),
             "roi": ops.roi_rows(ocon), "sessions": sessions.summary(),
+            "dispatches": dispatch.running(),
         }
         search_ctx = None
         if search_q is not None:
@@ -92,6 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Frame-Options", "DENY")  # a framed console = clickjackable writes
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         for k, v in (extra or {}).items():
@@ -150,18 +160,24 @@ class Handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(url.query)
             task = (qs.get("task") or [""])[0][:300]
             venture = (qs.get("venture") or [""])[0][:40]
+            launched = (qs.get("launched") or [""])[0][:40]
+            if launched and not dispatch.TS_RE.match(launched):
+                launched = ""
             try:
                 brief = dispatch.build_brief(task, venture) if task else ""
                 self._send(200, dashboard.do_page(
                     TOKEN, task, venture, brief, dispatch.agent_ready(),
-                    history=dispatch.recent()).encode())
+                    history=dispatch.recent(), launched_ts=launched).encode())
             except Exception as e:
                 self._send(500, f"brief failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/context":
+            from . import redact
             con = db.connect()
             ocon = ops.connect()
             try:
-                txt = contextpack.build(con, ocon, state.build_state(con))
+                # same fail-closed scrub as the dispatch brief: the browser-served
+                # copy must never leak a secret the disk copy would have redacted
+                txt = redact.scrub(contextpack.build(con, ocon, state.build_state(con)))
                 self._send(200, txt.encode(), "text/plain; charset=utf-8")
             except Exception as e:
                 self._send(500, f"context pack failed: {type(e).__name__}: {e}".encode(),
@@ -216,8 +232,15 @@ class Handler(BaseHTTPRequestHandler):
                                  form.get("service", "")[:80], form.get("note", "")[:300],
                                  venture=form.get("venture", "")[:40])
             elif do == "lead_touch":
-                ops.touch_lead(ocon, int(form["id"]), form.get("kind", "called")[:20],
-                               _money(form.get("amount")), form.get("note", "")[:300])
+                kind = form.get("kind", "called")[:20]
+                amt = _money(form.get("amount"))
+                if kind in ("collected", "quoted") and not (amt and amt > 0):
+                    # silently logging a $0 "collected" is how money vanishes from the goal bar
+                    self._send(400, b"type the $ amount first, then mark it "
+                                    b"collected/quoted \xe2\x80\x94 go back and retry")
+                    return
+                ops.touch_lead(ocon, int(form["id"]), kind, amt,
+                               form.get("note", "")[:300])
             elif do == "loop":
                 con = db.connect()
                 try:
@@ -239,18 +262,20 @@ class Handler(BaseHTTPRequestHandler):
             elif do == "missed_clear":
                 ops.kv_set(ocon, "missed_calls", "0")
             elif do == "dispatch":
-                from . import dashboard, dispatch
+                from . import dispatch
                 task = form.get("task", "").strip()[:300]
                 venture = form.get("venture", "")[:40]
                 if not task:
                     self._send(400, b"no task")
                     return
-                result = dispatch.dispatch(task, venture)
+                # the reaper bumps /version when the agent exits, so every open
+                # console refreshes itself the moment the work finishes
+                result = dispatch.dispatch(task, venture, on_exit=_bump)
                 _bump()
-                self._send(200, dashboard.do_page(
-                    TOKEN, task, venture, dispatch.build_brief(task, venture),
-                    dispatch.agent_ready(), result=result,
-                    history=dispatch.recent()).encode())
+                # PRG: redirect so the /do page can live-refresh without re-POSTing
+                loc = "/do?" + urllib.parse.urlencode(
+                    {"task": task, "venture": venture, "launched": result["ts"]})
+                self._send(303, b"", extra={"Location": loc})
                 return
             else:
                 self._send(400, b"unknown action")
@@ -260,8 +285,10 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError):
             self._send(400, b"bad request")
         except Exception as e:
-            self._send(500, f"<pre>write failed: {type(e).__name__}: {e}\n"
-                            f"Nothing was lost — go back and retry.</pre>".encode())
+            # text/plain, not HTML: the exception message can carry ingested text
+            self._send(500, f"write failed: {type(e).__name__}: {e}\n"
+                            f"Nothing was lost — go back and retry.".encode(),
+                       "text/plain; charset=utf-8")
         finally:
             ocon.close()
 
@@ -277,26 +304,39 @@ def _sync_loop():
                 fs as c_fs, notes as c_notes, chat as c_chat
             git_r, notes_r = {}, {}
             new = 0
-            for name, mod in (("cli", c_cli), ("codex", c_codex), ("git", c_git),
-                              ("fs", c_fs), ("notes", c_notes), ("chat", c_chat)):
-                try:
-                    r = mod.collect(con)
-                    new += (r.get("events_new", 0) if isinstance(r, dict) else 0)
-                    if name == "git":
-                        git_r = r
-                    if name == "notes":
-                        notes_r = r
-                except Exception:
-                    continue  # a degraded source never kills the loop
-            enrich.build_sessions(con)
-            enrich.detect_loops(con, git_r, notes_r)
-            con.commit()
-            db.enforce_perms()
-            con.close()
+            try:
+                for name, mod in (("cli", c_cli), ("codex", c_codex), ("git", c_git),
+                                  ("fs", c_fs), ("notes", c_notes), ("chat", c_chat)):
+                    try:
+                        r = mod.collect(con)
+                        new += (r.get("events_new", 0) if isinstance(r, dict) else 0)
+                        if name == "git":
+                            git_r = r
+                        if name == "notes":
+                            notes_r = r
+                        # advance the watermark and commit per collector, exactly like
+                        # `opsroom sync` — otherwise fs re-emits its whole window every
+                        # tick (event bloat + a page reload that wipes typed input),
+                        # and one bad collector rolls back every good one's events
+                        db.set_watermark(con, name, "ok", last_ts=r.get("watermark")
+                                         if isinstance(r, dict) else None)
+                        con.commit()
+                    except Exception:
+                        db.set_watermark(con, name, "failed")
+                        con.commit()
+                        continue  # a degraded source never kills the loop
+                enrich.build_sessions(con)
+                enrich.detect_loops(con, git_r, notes_r)
+                con.commit()
+                db.enforce_perms()
+            finally:
+                con.close()
             oc = ops.connect()
-            promises.scan(oc)
-            ingested = inbox.watch_tick(oc)  # re-import lead/reply drops on file change
-            oc.close()
+            try:
+                promises.scan(oc)
+                ingested = inbox.watch_tick(oc)  # re-import lead/reply drops on file change
+            finally:
+                oc.close()
             # only trigger a client reload when something actually changed, so the
             # /version poller can't wipe half-typed input on an idle 15-minute tick.
             if new or ingested:
@@ -343,7 +383,7 @@ def install_always_on(port=PORT) -> bool:
 def serve(port=PORT, open_browser=True):
     threading.Thread(target=_sync_loop, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"  # actual port (port=0 = ephemeral)
     print(f"opsroom console: {url}  (Ctrl-C stops it)")
     if open_browser:
         import subprocess

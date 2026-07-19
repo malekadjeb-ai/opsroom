@@ -127,7 +127,10 @@ trap = true
 """
 
 
-def run():
+DEMO_PORT = 7339  # never the real console's 7337: a demo must not shadow your ledger
+
+
+def run(serve_console: bool = True):
     from . import config
     demo_root = config.data_dir() / "demo"
     os.environ["OPSROOM_CONFIG_DIR"] = str(demo_root / "config")
@@ -204,13 +207,59 @@ def run():
         'stale_branch', 0.7, 12, 'open')""", ((now - timedelta(days=12)).isoformat(),))
     con.commit()
 
-    from . import state, views
-    import importlib
-    out = views.dash(con)
+    # ---- the operator ledger: the served console's source of truth for money,
+    # leads, replies and follow-ups. Without this the live demo reads $0 of $50K.
+    from . import inbox, ops
+    oc = ops.connect()
+    if not ops.cash_entries(oc):  # idempotent: a demo re-run doesn't double the money
+        ops.log_cash(oc, 5000, "meridian", "Meridian sprint deposit — Brightline")
+        ops.log_cash(oc, 2610, "shopkit", "41 license renewals")
+        ops.log_cash(oc, 640, "detailpro", "2 details collected")
+        ops.log_spend(oc, 420, "shopkit", "Stripe fees + hosting")
+        ops.log_spend(oc, 180, "meridian", "prospect-list data")
+        quoted_id = None
+        for name, phone, svc, note in [
+                ("Rowan Marsh", "5550100231", "full detail", "asked for a Saturday slot"),
+                ("Casey Ito", "5550100544", "interior", "quote sent, no answer yet"),
+                ("Jules Barton", "5550100712", "full detail", "came in from the website form"),
+                ("Avery Chen", "5550100903", "ceramic add-on", "wants the price by text"),
+                ("Marlowe Diaz", "5550100377", "interior", "missed call yesterday")]:
+            lid = ops.add_lead(oc, name, phone, svc, note, venture="detailpro")
+            if name == "Casey Ito":
+                quoted_id = lid
+        if quoted_id:
+            ops.touch_lead(oc, quoted_id, "quoted", 380, "held the $189 interior price")
+        fid = ops.log_touch(oc, "meridian", "Summit Fabrication (Chris Vale)",
+                            "called", "left a voicemail with Chris")
+        if fid:
+            oc.execute("UPDATE followups SET due=? WHERE id=?",
+                       (today.isoformat(), fid))  # due TODAY: the cadence engine has teeth
+            oc.commit()
+        inbox.merge_replies(oc, {"replies": [{
+            "from_name": "Dana Reyes", "from_email": "dana@cobaltlogistics.example",
+            "subject": "Re: the 2-week ops sprint", "date": today.isoformat(),
+            "snippet": "This looks interesting — what exactly would the first two weeks cover?",
+            "venture": "meridian", "msg_id": "demo-reply-1"}]})
+        ops.kv_set(oc, "missed_calls", "2")
+        ops.capture(oc, "Shopkit pro tier: test $79/mo before touching base pricing")
+    oc.close()
+
+    from . import views
+    out = views.dash(con)  # the static snapshot still lands next to the live console
     con.close()
     print(f"\ndemo portfolio: {demo_root}")
     print("This is FICTIONAL data (555 numbers, .example domains). Your real config/ledger untouched.")
     print("Reset: delete that folder. Set up your own: opsroom init")
+    if serve_console and not os.environ.get("OPSROOM_NO_SERVE"):
+        # the product IS the live console — buttons, ledgers, dispatch — not a
+        # static snapshot. Serve the seeded portfolio.
+        from . import serve as srv
+        open_b = not os.environ.get("OPSROOM_NO_OPEN")
+        try:
+            srv.serve(port=DEMO_PORT, open_browser=open_b)
+        except OSError:
+            srv.serve(port=0, open_browser=open_b)  # 7339 busy: take any free port
+        return 0
     import subprocess, sys
     opener = {"darwin": "open", "linux": "xdg-open"}.get(sys.platform)
     if opener and not os.environ.get("OPSROOM_NO_OPEN"):

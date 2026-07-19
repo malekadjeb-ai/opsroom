@@ -278,10 +278,13 @@ def by_agent(con, days: int = 7) -> list:
 # ---------------------------------------------------------------- drift
 
 def drift(con, week_offset: int = 0) -> dict:
-    """Session minutes per venture for the ISO week starting Monday (offset weeks back)."""
-    today = _now().date()
+    """Session minutes per venture for the ISO week starting Monday (offset weeks back).
+    Weeks are the operator's LOCAL weeks expressed as UTC bounds — Sunday-evening US
+    work belongs to this week's numbers, not next week's."""
+    today = _now().astimezone().date()
     monday = today - timedelta(days=today.weekday(), weeks=week_offset)
-    start, end = monday.isoformat(), (monday + timedelta(days=7)).isoformat()
+    start_dt = datetime(monday.year, monday.month, monday.day).astimezone(timezone.utc)
+    start, end = start_dt.isoformat(), (start_dt + timedelta(days=7)).isoformat()
     rows = con.execute("""
         SELECT venture, SUM(duration_min) m, COUNT(*) n FROM sessions
         WHERE started_at >= ? AND started_at < ? GROUP BY venture ORDER BY m DESC""",
@@ -299,6 +302,6 @@ def drift(con, week_offset: int = 0) -> dict:
             trap_min += m
         elif r["venture"] != "unknown":
             rev_min += m
-    return {"week_of": start, "rows": out, "total_min": total,
+    return {"week_of": monday.isoformat(), "rows": out, "total_min": total,
             "trap_min": trap_min, "rev_min": rev_min,
             "red_alert": trap_min > rev_min and trap_min > 60}

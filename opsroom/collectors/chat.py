@@ -117,6 +117,7 @@ def collect(con, dry_run: bool = False) -> dict:
         except Exception as e:
             print(f"  [chat] failed on {f.name}: {e}")
     if not dry_run:
+        con.commit()  # events must be durable BEFORE the source export is destroyed
         for f in cleanup:
             try:
                 f.unlink()  # spec: delete export after ingest to shrink blast radius

@@ -80,6 +80,44 @@ command = ["{sys.executable}", "{runner}"]
         hist = dispatch.recent()
         assert len(hist) == 2 and hist[0]["task"] == "Send the proposal to Harbor & Co", hist
 
+        # result feedback: the run is tracked to completion, never fire-and-forget
+        for _ in range(50):
+            if dispatch.status(hist[0]["tsid"]) == "done":
+                break
+            time.sleep(0.1)
+        assert dispatch.status(hist[0]["tsid"]) == "done", dispatch.status(hist[0]["tsid"])
+        assert dispatch.tail("../../../etc/passwd") == "", "tail accepted a path"
+
+        # a long-running dispatch reads 'running', appears in running(), then lands.
+        # fake secret assembled from parts: the repo must never contain a
+        # secret-shaped literal (GitHub push protection pattern-matches these)
+        fake_key = "sk-live-Abcdefghij1234567890" + "T3Blb" + "kFJx"
+        slow = Path(td) / "slow.py"
+        slow.write_text("import sys,time\nprint('agent working on it')\n"
+                        f"sys.stdout.flush()\ntime.sleep(4)\nprint({fake_key!r})\n")
+        (cfg_dir / "config.toml").write_text(CONFIG_OFF + f'''
+[agent]
+enabled = true
+command = ["{sys.executable}", "{slow}"]
+''')
+        config.load(force=True)
+        time.sleep(1.1)
+        r = dispatch.dispatch("Research the Brightline expansion", "meridian")
+        assert dispatch.status(r["ts"]) == "running", "fresh dispatch must read running"
+        assert any(d["ts"] == r["ts"] for d in dispatch.running()), "missing from running()"
+        for _ in range(30):
+            if "agent working on it" in dispatch.tail(r["ts"]):
+                break
+            time.sleep(0.2)
+        assert "agent working on it" in dispatch.tail(r["ts"]), "live tail not readable"
+        for _ in range(80):
+            if dispatch.status(r["ts"]) == "done":
+                break
+            time.sleep(0.1)
+        assert dispatch.status(r["ts"]) == "done"
+        assert fake_key not in dispatch.tail(r["ts"]), \
+            "agent log tail leaked a secret — scrub failed"
+
         # served: /do renders the brief; POST dispatch is CSRF-gated
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
         port = httpd.server_address[1]
@@ -99,11 +137,15 @@ command = ["{sys.executable}", "{runner}"]
         data = urllib.parse.urlencode({"do": "dispatch", "task": "Ship the deck",
                                        "venture": "meridian", "token": serve.TOKEN}).encode()
         time.sleep(1.1)
-        body = urllib.request.urlopen(urllib.request.Request(base + "/act", data),
-                                      timeout=10).read()
-        assert b"dispatched" in body, "tokened dispatch did not run"
+        resp = urllib.request.urlopen(urllib.request.Request(base + "/act", data),
+                                      timeout=10)
+        body = resp.read()
+        # PRG: the POST redirected to /do?launched=<ts> and the page shows live status
+        assert "launched=" in resp.geturl(), f"expected redirect, got {resp.geturl()}"
+        assert b"dispatched" in body or b"agent finished" in body, "no status banner"
+        assert b"recent dispatches" in body and b"live status" in body
         httpd.shutdown()
-    print("dispatch gate: brief content, off-by-default, argv launch, CSRF gate")
+    print("dispatch gate: brief content, off-by-default, argv launch, CSRF gate, live status + scrubbed tail, PRG")
     return 0
 
 

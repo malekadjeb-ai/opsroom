@@ -15,13 +15,17 @@ Security posture (this can execute a local program, so it's opt-in and rigid):
     machine unless YOUR agent command sends it somewhere.
 """
 import os
+import re
 import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, contextpack, db, ops, redact, state, ventures
 
 MAX_TASK = 300
+TS_RE = re.compile(r"^\d{8}-\d{6}-\d+$")  # dispatch ids are timestamps, never paths
+_PROCS = {}  # ts -> Popen for dispatches launched by THIS console boot
 
 
 def build_brief(task: str, venture: str = "") -> str:
@@ -66,42 +70,116 @@ def _open_600(path: Path):
     return open(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w")
 
 
-def dispatch(task: str, venture: str = "") -> dict:
+def dispatch(task: str, venture: str = "", on_exit=None) -> dict:
     """Write the brief; if [agent] enabled, launch the configured CLI on it,
-    detached, output to a log file. Returns {brief, log, launched}."""
+    detached, output to a log file. Returns {brief, log, launched, ts}.
+    on_exit (optional) fires from a reaper thread when the agent finishes, so
+    open consoles can refresh themselves the moment the work is done."""
     brief = build_brief(task, venture)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")  # microseconds: no collision
     ddir = _dispatch_dir()
     bf = ddir / f"{ts}-brief.md"
     with _open_600(bf) as fh:
         fh.write(brief)
-    out = {"brief": str(bf), "log": "", "launched": False}
+    out = {"brief": str(bf), "log": "", "launched": False, "ts": ts}
     agent = config.load().get("agent", {})
     if not agent.get("enabled"):
         return out
     cmd = [str(c) for c in (agent.get("command") or ["claude", "-p"])] + [brief]
     log = ddir / f"{ts}.log"
     with _open_600(log) as fh:
-        subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
-                         stdin=subprocess.DEVNULL, start_new_session=True,
-                         cwd=str(Path.home()))
+        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL, start_new_session=True,
+                                cwd=str(Path.home()))
+    _PROCS[ts] = proc
+    with _open_600(ddir / f"{ts}.pid") as fh:  # survives a console restart
+        fh.write(str(proc.pid))
+
+    def _reap():
+        proc.wait()
+        if on_exit:
+            try:
+                on_exit()
+            except Exception:
+                pass
+    threading.Thread(target=_reap, daemon=True).start()
     out.update(log=str(log), launched=True)
     return out
 
 
+def status(ts: str) -> str:
+    """'' (brief only) · 'running' · 'done' · 'exit N'. Works across console
+    restarts: falls back to the pid file, then to log existence."""
+    if not TS_RE.match(ts or ""):
+        return ""
+    p = _PROCS.get(ts)
+    if p is not None:
+        rc = p.poll()
+        if rc is None:
+            return "running"
+        return "done" if rc == 0 else f"exit {rc}"
+    d = config.data_dir() / "dispatch"
+    pidf = d / f"{ts}.pid"
+    if pidf.is_file():
+        try:
+            os.kill(int(pidf.read_text().strip()), 0)
+            return "running"  # launched by a previous boot, still alive
+        except (ValueError, OSError):
+            pass
+    return "done" if (d / f"{ts}.log").exists() else ""
+
+
+def tail(ts: str, max_bytes: int = 4000) -> str:
+    """The last chunk of a dispatch log, scrubbed. ts is validated — this function
+    can never be steered to an arbitrary path."""
+    if not TS_RE.match(ts or ""):
+        return ""
+    log = config.data_dir() / "dispatch" / f"{ts}.log"
+    if not log.is_file():
+        return ""
+    size = log.stat().st_size
+    with open(log, "rb") as fh:
+        if size > max_bytes:
+            fh.seek(size - max_bytes)
+        txt = fh.read().decode(errors="replace")
+    if size > max_bytes:
+        txt = "…" + txt.split("\n", 1)[-1]
+    # agent output is NEW text that never passed the write-path scrub — scrub here
+    return redact.scrub(txt)
+
+
+def running() -> list:
+    """Live dispatches from this boot, for the AGENTS RUNNING panel."""
+    out = []
+    for ts, p in list(_PROCS.items()):
+        if p.poll() is None:
+            out.append({"ts": ts, "task": _task_of(ts)})
+    return sorted(out, key=lambda r: r["ts"], reverse=True)
+
+
+def _task_of(ts: str) -> str:
+    bf = config.data_dir() / "dispatch" / f"{ts}-brief.md"
+    try:
+        for line in bf.read_text().splitlines():
+            if line.startswith("TASK: "):
+                return line[6:]
+    except OSError:
+        pass
+    return ""
+
+
 def recent(limit: int = 8) -> list:
-    """Latest dispatches (brief files, newest first) for the /do page."""
+    """Latest dispatches (newest first) with live status + scrubbed log tail,
+    for the /do page history."""
     d = config.data_dir() / "dispatch"
     if not d.is_dir():
         return []
     briefs = sorted(d.glob("*-brief.md"), reverse=True)[:limit]
     out = []
     for b in briefs:
-        task = ""
-        for line in b.read_text().splitlines():
-            if line.startswith("TASK: "):
-                task = line[6:]
-                break
-        log = d / b.name.replace("-brief.md", ".log")
-        out.append({"ts": b.name[:15], "task": task, "log": log.name if log.exists() else ""})
+        ts = b.name[:-len("-brief.md")]
+        log = d / f"{ts}.log"
+        out.append({"ts": b.name[:15], "tsid": ts, "task": _task_of(ts),
+                    "log": log.name if log.exists() else "",
+                    "status": status(ts), "tail": tail(ts, 2000)})
     return out
