@@ -1,13 +1,15 @@
 # Launch checklist — target: top of GitHub trending (daily)
 
-> **STATUS 2026-07-18 (current):** repo is PUBLIC. **v0.7.0** released on GitHub, CI green,
-> topics set, two security audits clean, hero GIF live. Nothing has been posted anywhere yet.
+> **STATUS 2026-07-18 (current):** repo is PUBLIC. **v0.8.0** released on GitHub, CI green,
+> topics set, THREE security/correctness audits clean, hero GIF live. Nothing posted anywhere yet.
 > Launch scheduled **Tue 2026-07-21, 8:00 AM CT** — resume at "Launch morning" below.
 > The product grew far past a dashboard since v0.3.0: live SEARCH, a reply DRAFTER,
-> leads/replies inbox, real per-venture P&L + simulator, agent DISPATCH (write-back loop),
-> a live AGENTS-RUNNING panel, and a reorganized one-ranked-stack console.
-> Remaining pre-launch items: PyPI upload of v0.7.0 (maintainer's token), fresh-machine
-> install test, social-preview upload check. Screenshots regenerated from the current console.
+> leads/replies inbox, real per-venture P&L + simulator, agent DISPATCH (write-back loop)
+> now with LIVE RESULT FEEDBACK (running/done + log tail), a live AGENTS-RUNNING panel,
+> a reorganized one-ranked-stack console, and `opsroom demo` serving the full LIVE console.
+> Remaining pre-launch items: PyPI upload of **v0.8.0** (`pipx run twine upload dist/*`
+> from the repo, maintainer's token — PyPI currently serves 0.7.0), fresh-machine
+> install test, social-preview upload check.
 
 Reality check on the number: #1 daily overall needs roughly 400-800 stars in 24h;
 #1 in Python needs roughly 150-300. That volume comes from HN front page + Reddit +
