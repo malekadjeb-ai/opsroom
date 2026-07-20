@@ -82,6 +82,7 @@ def _page(search_q=None) -> bytes:
             "roi": ops.roi_rows(ocon), "sessions": sessions.summary(),
             "dispatches": dispatch.running(),
             "proposals": proposals.pending(ocon),
+            "queued": proposals.queued(ocon),
             "setup_needed": config.setup_needed(),
         }
         search_ctx = None
@@ -293,7 +294,6 @@ class Handler(BaseHTTPRequestHandler):
             elif do == "missed_clear":
                 ops.kv_set(ocon, "missed_calls", "0")
             elif do == "dispatch":
-                from . import dispatch
                 task = form.get("task", "").strip()[:300]
                 venture = form.get("venture", "")[:40]
                 if not task:
@@ -324,8 +324,16 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         if payload["verb"] == "dispatch":
                             ocon.commit()  # persist the claim before launching
-                            dispatch.dispatch(payload["task"], payload["venture"],
-                                              on_exit=_bump)
+                            if dispatch.running():
+                                # an agent is already working: queue it to auto-fire
+                                # when the runway clears (F1 meets the work queue)
+                                proposals.enqueue(ocon, payload["task"],
+                                                  payload.get("venture", ""),
+                                                  lead=payload.get("lead", 0),
+                                                  source=row["dispatch_ts"] or "operator")
+                            else:
+                                dispatch.dispatch(payload["task"], payload["venture"],
+                                                  on_exit=_bump)
                         else:
                             proposals.apply_payload(ocon, payload)
                     except Exception:
@@ -333,6 +341,19 @@ class Handler(BaseHTTPRequestHandler):
                         raise
             elif do == "proposal_dismiss":
                 proposals.dismiss(ocon, int(form["pid"]))
+            elif do == "dispatch_queue":
+                task = form.get("task", "").strip()[:300]
+                venture = form.get("venture", "")[:40]
+                if not task:
+                    self._send(400, b"no task")
+                    return
+                try:
+                    lead = int(form.get("lead") or 0)
+                except ValueError:
+                    lead = 0
+                proposals.enqueue(ocon, task, venture, lead=lead)
+                if not dispatch.running():  # runway already clear: fire immediately
+                    dispatch.fire_next(on_exit=_bump)
             elif do == "setup_save":
                 from . import setup
                 if not config.setup_needed(config.load(force=True)):
@@ -432,6 +453,12 @@ def _sync_loop():
                 ingested = inbox.watch_tick(oc)  # re-import lead/reply drops on file change
             finally:
                 oc.close()
+            try:
+                # rescue queued dispatches stranded by a console restart
+                if dispatch.fire_next(on_exit=_bump):
+                    _bump()
+            except Exception:
+                pass
             # only trigger a client reload when something actually changed, so the
             # /version poller can't wipe half-typed input on an idle 15-minute tick.
             if new or ingested:

@@ -298,11 +298,11 @@ def pending(ocon) -> list:
 
 
 def claim(ocon, pid: int, status: str) -> dict | None:
-    """Atomically claim a pending proposal (double-tap = rowcount 0 = None).
-    Does NOT commit — the caller's ledger write commits the claim with it, so
-    claim + write land in one transaction."""
+    """Atomically claim a pending (or queued) proposal (double-tap = rowcount 0 =
+    None). Does NOT commit — the caller's ledger write commits the claim with it,
+    so claim + write land in one transaction."""
     cur = ocon.execute(
-        "UPDATE proposals SET status=?, decided=? WHERE id=? AND status='pending'",
+        "UPDATE proposals SET status=?, decided=? WHERE id=? AND status IN ('pending','queued')",
         (status, _now(), pid))
     if cur.rowcount != 1:
         return None
@@ -349,6 +349,57 @@ def apply_payload(ocon, payload: dict) -> None:
         ops.capture(ocon, payload["text"])
     else:  # dispatch is handled by the caller (it needs the serve reaper hook)
         raise ValueError(f"apply_payload can't handle verb {v!r}")
+
+
+# ---------------------------------------------------------------- work queue
+
+def enqueue(ocon, task: str, venture: str = "", lead: int = 0,
+            source: str = "operator") -> int:
+    """Queue a dispatch to auto-fire when the current agent finishes. Reuses the
+    proposals table (verb=dispatch, status=queued) — same dedup, same visibility.
+    source is 'operator' or the dispatch id that proposed the chain."""
+    _ensure(ocon)
+    payload = {"verb": "dispatch", "task": redact.scrub((task or "").strip())[:300],
+               "venture": venture if venture in ventures.VENTURES and venture != "unknown"
+               else ""}
+    if lead:
+        payload["lead"] = int(lead)
+    if not payload["task"]:
+        return 0
+    # "q:" namespace: a queued copy must never collide (UNIQUE) with the original
+    # harvested proposal row that produced it
+    cur = ocon.execute(
+        "INSERT OR IGNORE INTO proposals (dispatch_ts, verb, payload, summary, status, created)"
+        " VALUES (?,?,?,?,'queued',?)",
+        (f"q:{source}", "dispatch", json.dumps(payload, sort_keys=True),
+         redact.scrub(summarize(payload)), _now()))
+    ocon.commit()
+    return cur.rowcount
+
+
+def queued(ocon) -> list:
+    _ensure(ocon)
+    return ocon.execute(
+        "SELECT * FROM proposals WHERE status='queued' ORDER BY created ASC LIMIT 20"
+    ).fetchall()
+
+
+def pop_queued(ocon) -> dict | None:
+    """Claim the oldest queued dispatch (FIFO) for firing. UPDATE-with-rowcount so
+    two racing reapers can never both fire the same item."""
+    _ensure(ocon)
+    row = ocon.execute(
+        "SELECT * FROM proposals WHERE status='queued' ORDER BY created ASC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return None
+    cur = ocon.execute(
+        "UPDATE proposals SET status='fired', decided=? WHERE id=? AND status='queued'",
+        (_now(), row["id"]))
+    ocon.commit()
+    if cur.rowcount != 1:
+        return None  # another reaper won the race
+    return json.loads(row["payload"])
 
 
 # ---------------------------------------------------------------- brief appendix

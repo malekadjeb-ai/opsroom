@@ -127,6 +127,10 @@ def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None) ->
                 ocon.close()
         except Exception:
             pass
+        try:
+            fire_next(on_exit)  # the work queue: next queued dispatch auto-fires
+        except Exception:
+            pass
         if on_exit:
             try:
                 on_exit()
@@ -135,6 +139,25 @@ def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None) ->
     threading.Thread(target=_reap, daemon=True).start()
     out.update(log=str(log), launched=True)
     return out
+
+
+def fire_next(on_exit=None) -> bool:
+    """Work-queue lite: when the runway is clear ([agent] on, nothing running),
+    launch the oldest queued dispatch. Called by the reaper after each run and by
+    the serve sync tick (which rescues items stranded by a console restart)."""
+    from . import proposals
+    if not agent_ready() or running():
+        return False
+    ocon = ops.connect()
+    try:
+        p = proposals.pop_queued(ocon)
+    finally:
+        ocon.close()
+    if not p:
+        return False
+    dispatch(p["task"], p.get("venture", ""), on_exit=on_exit,
+             lead_id=p.get("lead"))
+    return True
 
 
 def status(ts: str) -> str:

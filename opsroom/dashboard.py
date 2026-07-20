@@ -213,18 +213,30 @@ def _momentum_strip(st, sx, cash, goal, days):
             f"<div class='mo-lbl'>{esc(label)}</div></div>")
 
 
-def _sessions_strip(sess, dispatches=None) -> str:
+def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
     """Live agent sessions — what's running right now, cowork/background flagged. Answers
     'is an agent working for me on this venture' without leaving the console. Console
-    dispatches show here too: work YOU launched from a ▶ button, with a live link."""
+    dispatches show here too: work YOU launched from a ▶ button, with a live link —
+    and the work QUEUE: dispatches staged to auto-fire when the runway clears."""
     dispatches = dispatches or []
-    if not (sess and sess.get("rows")) and not dispatches:
+    queued = queued or []
+    if not (sess and sess.get("rows")) and not dispatches and not queued:
         return ""
     chips = ""
     for d in dispatches[:4]:
         chips += (f"<a class='sess cowork busy' href='{esc(do_url(d['task'][:200]))}"
                   f"&launched={esc(d['ts'])}' style='text-decoration:none'>"
                   f"<b>🤖 dispatched</b><span>{esc(d['task'][:60]) or 'brief'} · running</span></a>")
+    for qd in queued[:4]:
+        import json as _json
+        try:
+            qtask = _json.loads(qd["payload"]).get("task", "")
+        except ValueError:
+            qtask = ""
+        drop = _f(token, {"do": "proposal_dismiss", "pid": qd["id"]}, "×",
+                  "btn small gray") if token else ""
+        chips += (f"<span class='sess int'><b>⏳ queued</b>"
+                  f"<span>{esc(qtask[:60]) or 'next run'} · auto-fires next</span>{drop}</span>")
     for s in (sess.get("rows") if sess else [])[:6]:
         vlabel = ventures.VENTURES.get(s["venture"], {}).get("label", s["venture"])
         dot = "cowork" if s["is_cowork"] else "int"
@@ -233,7 +245,8 @@ def _sessions_strip(sess, dispatches=None) -> str:
                   f"<span>{esc(s['kind'])} · {esc(vlabel)} · {s['age_min']}m</span></span>")
     co = (sess or {}).get("cowork", 0)
     live = ((sess or {}).get("live") or 0) + len(dispatches)
-    head = (f"{live} live" + (f" · <b class='go'>{co} cowork</b>" if co else ""))
+    head = (f"{live} live" + (f" · <b class='go'>{co} cowork</b>" if co else "")
+            + (f" · {len(queued)} queued" if queued else ""))
     return (f"<div class='card sessions'><div class='cardhead'>"
             f"<h3>🟢 AGENTS RUNNING — {head}</h3></div><div class='sess-row'>{chips}</div></div>")
 
@@ -679,6 +692,12 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
 <input type="hidden" name="task" value="{esc(task)}"><input type="hidden" name="venture" value="{esc(venture)}">
 {f'<input type="hidden" name="lead" value="{int(lead)}">' if lead else ''}
 <button class="btn">{'🤖 send to your agent — runs it now' if agent_on else '🤖 write the brief file (agent launch disabled)'}</button></form>"""
+    if agent_on and task and any(h["status"] == "running" for h in (history or [])):
+        send_btn += f"""<form method="post" action="/act" style="display:inline">
+<input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="do" value="dispatch_queue">
+<input type="hidden" name="task" value="{esc(task)}"><input type="hidden" name="venture" value="{esc(venture)}">
+{f'<input type="hidden" name="lead" value="{int(lead)}">' if lead else ''}
+<button class="btn gray">⏳ queue it — runs after the current agent</button></form>"""
     def _chip(s):
         if s == "running":
             return "<span class='pill' style='color:var(--go)'>● running</span>"
@@ -946,7 +965,8 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
         # LIVE: one ranked stack does the work; momentum + live sessions sit above it.
         momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
         sess_strip = _sessions_strip(serve_ctx.get("sessions"),
-                                     serve_ctx.get("dispatches"))
+                                     serve_ctx.get("dispatches"),
+                                     serve_ctx.get("queued"), serve_ctx["token"])
         setup = setup_card(serve_ctx["token"]) if serve_ctx.get("setup_needed") else ""
         now_tab = (setup + ribbon + leak + momentum + sess_strip
                    + _serve_now_block(serve_ctx, st)
