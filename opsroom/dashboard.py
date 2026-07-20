@@ -238,6 +238,39 @@ def _sessions_strip(sess, dispatches=None) -> str:
             f"<h3>🟢 AGENTS RUNNING — {head}</h3></div><div class='sess-row'>{chips}</div></div>")
 
 
+_PROP_TAGS = {"cash": ("CASH", "go"), "spend": ("SPEND", "warn"),
+              "lead_add": ("LEAD", "go"), "lead_touch": ("LEAD", "cool"),
+              "touch": ("TOUCH", "cool"), "followup": ("FOLLOW UP", "cool"),
+              "capture": ("INBOX", "dim"), "dispatch": ("RUN NEXT", "hot")}
+
+_DISPATCH_TS = re.compile(r"^\d{8}-\d{6}-\d+$")
+
+
+def _proposals_strip(sx) -> str:
+    """The operator loop's return leg: what the agents PROPOSE, each one tap from
+    the ledger. Renders nothing when nothing is pending. Every summary is agent-
+    derived text — scrubbed at stage time, escaped here."""
+    props = sx.get("proposals") or []
+    if not props:
+        return ""
+    tok = sx["token"]
+    rows = ""
+    for p in props:
+        tag, tagcls = _PROP_TAGS.get(p["verb"], (p["verb"].upper()[:10], "dim"))
+        prov = (f"<a class='btn small gray' href='/do?launched={esc(p['dispatch_ts'])}'>log</a>"
+                if _DISPATCH_TS.match(p["dispatch_ts"] or "") else "")
+        confirm = "This launches your agent CLI on the proposed task." \
+            if p["verb"] == "dispatch" else ""
+        btns = (prov
+                + _f(tok, {"do": "proposal_apply", "pid": p["id"]}, "✓ apply",
+                     confirm=confirm)
+                + _f(tok, {"do": "proposal_dismiss", "pid": p["id"]}, "×", "btn small gray"))
+        rows += _stack_row(tag, tagcls, esc(p["summary"]), "", btns)
+    return (f"<div class='card action stack'><div class='cardhead'>"
+            f"<h3>🤖 AGENT PROPOSES — {len(props)} pending · nothing applies without your tap</h3>"
+            f"</div>{rows}</div>")
+
+
 def _stack_row(tag, tagcls, title, sub, buttons):
     """One row in the unified DO NOW stack: a source tag, the action, inline buttons."""
     sub_html = f"<div class='ar-sub'>{sub}</div>" if sub else ""
@@ -357,7 +390,7 @@ def _serve_now_block(sx, st) -> str:
         missed_html = (f"<div class='banner bad'>☎ {sx['missed_calls']} missed calls in the last "
                        f"lead drop — numberless notifications; only your lead source shows who called."
                        + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray") + "</div>")
-    stack = _do_now_stack(sx, st, tok)
+    stack = _proposals_strip(sx) + _do_now_stack(sx, st, tok)
     vopts = _vopts()
     quick = f"""<details class="card logit"><summary>✍️ LOG IT — record a touch, cash, or lead (every touch schedules its day-3 follow-up)</summary>
 <div class="cardhead"><a class="btn small gray" href="/draft">✍ draft a reply</a></div>

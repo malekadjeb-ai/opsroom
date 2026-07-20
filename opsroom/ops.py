@@ -109,6 +109,16 @@ def log_touch(con, venture: str, target: str, kind: str, note: str = "",
     return fid
 
 
+def followup_add(con, target: str, due: str, venture: str = "", note: str = "") -> int:
+    """Schedule a follow-up directly (used by applied agent proposals — same row
+    shape log_touch creates, without logging a touch that never happened)."""
+    cur = con.execute(
+        "INSERT INTO followups (due, venture, target, note, created_ts) VALUES (?,?,?,?,?)",
+        (due, venture, target, redact.scrub(note), _now()))
+    con.commit()
+    return cur.lastrowid
+
+
 def followup_set(con, fid: int, op: str) -> None:
     if op == "done":
         con.execute("UPDATE followups SET status='done', done_ts=? WHERE id=?", (_now(), fid))

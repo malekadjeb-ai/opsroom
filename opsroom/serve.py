@@ -22,8 +22,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import contextpack, db, dispatch, enrich, inbox, ops, promises, sessions, state, \
-    ventures, views
+from . import contextpack, db, dispatch, enrich, inbox, ops, promises, proposals, \
+    sessions, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -57,6 +57,11 @@ def _page(search_q=None) -> bytes:
     con = db.connect()
     ocon = ops.connect()
     try:
+        try:
+            # pick up proposals from runs reaped while the console was down
+            proposals.harvest_finished(ocon)
+        except Exception:
+            pass
         st = state.build_state(con)
         d = enrich.drift(con)
         lps = con.execute("""SELECT * FROM loops WHERE status='open'
@@ -75,6 +80,7 @@ def _page(search_q=None) -> bytes:
             "spend_total": ops.spend_total(ocon), "spend_entries": ops.spend_entries(ocon),
             "roi": ops.roi_rows(ocon), "sessions": sessions.summary(),
             "dispatches": dispatch.running(),
+            "proposals": proposals.pending(ocon),
         }
         search_ctx = None
         if search_q is not None:
@@ -277,6 +283,26 @@ class Handler(BaseHTTPRequestHandler):
                     {"task": task, "venture": venture, "launched": result["ts"]})
                 self._send(303, b"", extra={"Location": loc})
                 return
+            elif do == "proposal_apply":
+                import json as _json
+                pid = int(form["pid"])
+                # claim WITHOUT committing: the ops write below commits, landing
+                # claim + ledger write in one transaction. rowcount 0 = double-tap.
+                row = proposals.claim(ocon, pid, "applied")
+                if row is not None:
+                    payload = _json.loads(row["payload"])
+                    try:
+                        if payload["verb"] == "dispatch":
+                            ocon.commit()  # persist the claim before launching
+                            dispatch.dispatch(payload["task"], payload["venture"],
+                                              on_exit=_bump)
+                        else:
+                            proposals.apply_payload(ocon, payload)
+                    except Exception:
+                        proposals.unclaim(ocon, pid)  # retryable, nothing lost
+                        raise
+            elif do == "proposal_dismiss":
+                proposals.dismiss(ocon, int(form["pid"]))
             else:
                 self._send(400, b"unknown action")
                 return

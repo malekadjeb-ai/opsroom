@@ -48,6 +48,8 @@ def build_brief(task: str, venture: str = "") -> str:
     finally:
         con.close()
         ocon.close()
+    from . import proposals
+    lines.append(proposals.PROTOCOL_APPENDIX)
     # fail-closed scrub: the brief is written to disk AND passed to a subprocess, so
     # a secret that slipped into a note/capture/offer never leaves in cleartext.
     return redact.scrub("\n".join(lines))
@@ -97,6 +99,17 @@ def dispatch(task: str, venture: str = "", on_exit=None) -> dict:
 
     def _reap():
         proc.wait()
+        try:
+            # harvest the agent's output into PROPOSED ledger writes (pending,
+            # one-tap approve on the console). A bad log must never kill the reaper.
+            from . import proposals
+            ocon = ops.connect()
+            try:
+                proposals.harvest(ocon, ts)
+            finally:
+                ocon.close()
+        except Exception:
+            pass
         if on_exit:
             try:
                 on_exit()
