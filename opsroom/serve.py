@@ -23,8 +23,8 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import config, contextpack, db, dispatch, enrich, inbox, ops, promises, \
-    proposals, sessions, state, ventures, views
+from . import config, contextpack, counsel, db, dispatch, enrich, inbox, ops, \
+    promises, proposals, sessions, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -63,6 +63,10 @@ def _page(search_q=None) -> bytes:
             proposals.harvest_finished(ocon)
         except Exception:
             pass
+        try:
+            counsel.harvest_finished(ocon)  # own guard: one failing sweep can't starve the other
+        except Exception:
+            pass
         st = state.build_state(con)
         d = enrich.drift(con)
         lps = con.execute("""SELECT * FROM loops WHERE status='open'
@@ -84,7 +88,13 @@ def _page(search_q=None) -> bytes:
             "proposals": proposals.pending(ocon),
             "queued": proposals.queued(ocon),
             "setup_needed": config.setup_needed(),
+            "counsel": counsel.latest_open(ocon),
+            "agent_on": dispatch.agent_ready(),
         }
+        if serve_ctx["counsel"]:
+            serve_ctx["counsel_nprops"] = ocon.execute(
+                "SELECT COUNT(*) c FROM proposals WHERE dispatch_ts=? AND status='pending'",
+                (serve_ctx["counsel"]["dispatch_ts"],)).fetchone()["c"]
         search_ctx = None
         if search_q is not None:
             q = search_q.strip()[:120]
@@ -153,6 +163,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, _page(search_q=q))
             except Exception as e:
                 self._send(500, f"search failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
+        elif url.path == "/counsel":
+            from . import dashboard
+            qs = urllib.parse.parse_qs(url.query)
+            ts = (qs.get("ts") or [""])[0][:40]
+            if ts and not counsel.TS_RE.match(ts):
+                ts = ""
+            ocon = ops.connect()
+            try:
+                row = counsel.get(ocon, ts) if ts else counsel.latest_open(ocon)
+                cts = row["dispatch_ts"] if row else ""
+                props = [p for p in proposals.pending(ocon)
+                         if p["dispatch_ts"] == cts] if cts else []
+                self._send(200, dashboard.counsel_page(
+                    TOKEN, row, dispatch.status(cts) if cts else "",
+                    dispatch.tail(cts, 2000) if cts else "", props,
+                    counsel.recent(ocon), dispatch.agent_ready()).encode())
+            except Exception as e:
+                self._send(500, f"counsel failed:\n{type(e).__name__}: {e}".encode(),
+                           "text/plain; charset=utf-8")
+            finally:
+                ocon.close()
         elif url.path == "/leads":
             from . import dashboard
             qs = urllib.parse.parse_qs(url.query)
@@ -184,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, f"draft failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/do":
-            from . import dashboard, dispatch
+            from . import dashboard
             qs = urllib.parse.parse_qs(url.query)
             task = (qs.get("task") or [""])[0][:300]
             venture = (qs.get("venture") or [""])[0][:40]
@@ -341,6 +372,21 @@ class Handler(BaseHTTPRequestHandler):
                         raise
             elif do == "proposal_dismiss":
                 proposals.dismiss(ocon, int(form["pid"]))
+            elif do == "ask":
+                q = form.get("question", "").strip()[:500]
+                if not q:
+                    self._send(400, b"type a question first")
+                    return
+                result = dispatch.dispatch("Answer the operator's question",
+                                           form.get("venture", "")[:40], on_exit=_bump,
+                                           kind="ask", question=q)
+                counsel.register(ocon, result["ts"], "ask", q)
+                _bump()
+                loc = "/counsel?" + urllib.parse.urlencode({"ts": result["ts"]})
+                self._send(303, b"", extra={"Location": loc})
+                return
+            elif do == "counsel_archive":
+                counsel.archive(ocon, int(form["cid"]))
             elif do == "dispatch_queue":
                 task = form.get("task", "").strip()[:300]
                 venture = form.get("venture", "")[:40]
@@ -457,6 +503,16 @@ def _sync_loop():
                 # rescue queued dispatches stranded by a console restart
                 if dispatch.fire_next(on_exit=_bump):
                     _bump()
+            except Exception:
+                pass
+            try:
+                # the advisor: the console thinks on its own schedule
+                oc = ops.connect()
+                try:
+                    if counsel.advise_tick(oc, on_exit=_bump):
+                        _bump()
+                finally:
+                    oc.close()
             except Exception:
                 pass
             # only trigger a client reload when something actually changed, so the

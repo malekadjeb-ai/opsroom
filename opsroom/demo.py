@@ -294,6 +294,44 @@ def run(serve_console: bool = True):
             p.write_text(text)
             p.chmod(0o600)
         proposals.harvest(oc, ts)  # the real path: parse → validate → stage pending
+
+        # ---- THE ADVISOR, pre-loaded: an autonomous briefing the console "thought
+        # up" before you opened it. Same real register→harvest path.
+        from . import counsel
+        ts2 = (now - timedelta(minutes=9)).strftime("%Y%m%d-%H%M%S-%f")
+        brief2 = ("# DISPATCH — do this now\n\nTASK: " + counsel.ADVISE_TASK
+                  + "\n\n(demo brief — fictional)\n")
+        log2 = ("reading the board…\n"
+                "```counsel\n"
+                "## Verdict\n"
+                "Cash is **on pace** ($8,250 of $50K) but two leaks are compounding:\n"
+                "the $30K Meridian pipeline is stuck behind one PDF, and 6 DetailPro\n"
+                "quotes are aging past day 7 — quote-to-close falls ~40% after that.\n"
+                "## Plays beyond the queue\n"
+                "1. Bundle the case-study PDF from the Brightline discovery notes — 90\n"
+                "minutes unblocks $30K of proposals.\n"
+                "2. Text-blast the 6 aged DetailPro quotes a Saturday slot at the $189\n"
+                "interior price — recovered quotes beat new leads on cost.\n"
+                "3. Shopkit's 41 licenses are churn-flat: a $79 pro tier test this week\n"
+                "rides the renewal cycle instead of waiting for next month.\n"
+                "```\n"
+                "```counsel-plan\n"
+                '{"steps": [\n'
+                '  {"task": "Draft the Meridian case-study PDF from the Brightline notes", "venture": "meridian", "why": "unblocks $30K of live proposals"},\n'
+                '  {"task": "Text the 6 aged DetailPro quotes a Saturday slot at $189", "venture": "detailpro", "why": "quotes decay hard after day 7"},\n'
+                '  {"task": "Spec the Shopkit $79 pro tier test", "venture": "shopkit", "why": "ride this month\'s renewal cycle"}\n'
+                "]}\n"
+                "```\n"
+                '```opsroom\n{"propose": "followup", "target": "Brightline Dental",'
+                ' "due": "+1d", "venture": "meridian", "note": "proposal follow-through'
+                ' while the discovery call is fresh"}\n```\n')
+        for fname, text in ((f"{ts2}-brief.md", brief2), (f"{ts2}.log", log2)):
+            p = ddir / fname
+            p.write_text(text)
+            p.chmod(0o600)
+        counsel.register(oc, ts2, "advise", "")
+        counsel.harvest(oc, ts2)
+        proposals.harvest(oc, ts2)
     oc.close()
 
     from . import views

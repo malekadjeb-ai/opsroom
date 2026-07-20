@@ -38,7 +38,9 @@ def main():
                        "TODAY'S PACE", "Summit Fabrication",
                        # the operator loop, pre-loaded: a finished agent run's
                        # output staged as pending one-tap proposals
-                       "AGENT PROPOSES", "record $380", "nothing applies without your tap"):
+                       "AGENT PROPOSES", "record $380", "nothing applies without your tap",
+                       # the advisor: an autonomous briefing waiting on open
+                       "TODAY'S BRIEFING", "on pace"):
             assert needle in live, f"live demo missing: {needle}"
         assert live.count("<form") >= 10, "live demo must be read-WRITE, not words on a screen"
         # the /leads workspace over the seeded ledger: filters see every status

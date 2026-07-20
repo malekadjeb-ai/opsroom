@@ -50,6 +50,10 @@ DEFAULTS = {
     "agent": {
         "enabled": False,            # opt-in: let the console launch your agent CLI
         "command": ["claude", "-p"],  # argv prefix; the brief is appended as ONE argument
+        # the autonomous advisor — the ONLY unattended agent launch in opsroom, and a
+        # SEPARATE opt-in beyond enabled: "off" | "daily" (one briefing after 6am
+        # local) | int hours between briefings (2..168)
+        "advise": "off",
     },
     "ventures": [],                  # list of tables: key,label,revenue,track,trap,
                                      #   path_needles,keywords,files,target_table,playbook

@@ -46,6 +46,17 @@ def main():
         assert "$12,000" in brief, "canon offer missing"
         assert "OPERATOR" in brief.upper(), "context pack missing"
 
+        # kind='do' (the default) carries NO counsel protocol — v0.9 brief unchanged
+        assert "ANSWER PROTOCOL" not in brief and "OPERATOR QUESTION" not in brief
+        # kind='ask' carries the question + answer protocol
+        ask = dispatch.build_brief("Answer the operator's question", "meridian",
+                                   kind="ask", question="What about the aged quotes?")
+        assert "## OPERATOR QUESTION" in ask and "What about the aged quotes?" in ask
+        assert "ANSWER PROTOCOL" in ask and "ADVISOR MANDATE" not in ask
+        # kind='advise' carries the autonomous mandate
+        adv = dispatch.build_brief("Advisor briefing", kind="advise")
+        assert "ADVISOR MANDATE" in adv and "BEYOND the derived DO NOW" in adv
+
         # default: DISABLED — brief written, nothing launched
         assert dispatch.agent_ready() is False
         r = dispatch.dispatch("Write the case study", "meridian")

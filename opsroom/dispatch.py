@@ -28,12 +28,18 @@ TS_RE = re.compile(r"^\d{8}-\d{6}-\d+$")  # dispatch ids are timestamps, never p
 _PROCS = {}  # ts -> Popen for dispatches launched by THIS console boot
 
 
-def build_brief(task: str, venture: str = "", lead_id: int = None) -> str:
+def build_brief(task: str, venture: str = "", lead_id: int = None,
+                kind: str = "do", question: str = "") -> str:
     """The hand-off document: the task, the venture's rails, the lead's context
-    when dispatched from a lead row, and the live context pack."""
+    when dispatched from a lead row, and the live context pack. kind='ask' adds
+    the operator's question + answer protocol; kind='advise' adds the autonomous
+    advisor mandate; kind='do' output is unchanged from v0.9."""
     task = (task or "").strip()[:MAX_TASK]
     meta = ventures.VENTURES.get(venture, {})
     lines = ["# DISPATCH — do this now", "", f"TASK: {task}"]
+    if kind == "ask" and question:
+        lines += ["", "## OPERATOR QUESTION",
+                  redact.scrub((question or "").strip())[:500]]
     if venture and meta:
         lines.append(f"VENTURE: {meta.get('label', venture)}")
     rails = [f"- {r}" for r in meta.get("playbook", [])]
@@ -67,6 +73,11 @@ def build_brief(task: str, venture: str = "", lead_id: int = None) -> str:
         ocon.close()
     from . import proposals
     lines.append(proposals.PROTOCOL_APPENDIX)
+    if kind in ("ask", "advise"):
+        from . import counsel
+        lines.append(counsel.ANSWER_APPENDIX)
+        if kind == "advise":
+            lines.append(counsel.ADVISE_APPENDIX)
     # fail-closed scrub: the brief is written to disk AND passed to a subprocess, so
     # a secret that slipped into a note/capture/offer never leaves in cleartext.
     return redact.scrub("\n".join(lines))
@@ -89,12 +100,13 @@ def _open_600(path: Path):
     return open(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w")
 
 
-def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None) -> dict:
+def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None,
+             kind: str = "do", question: str = "") -> dict:
     """Write the brief; if [agent] enabled, launch the configured CLI on it,
     detached, output to a log file. Returns {brief, log, launched, ts}.
     on_exit (optional) fires from a reaper thread when the agent finishes, so
     open consoles can refresh themselves the moment the work is done."""
-    brief = build_brief(task, venture, lead_id=lead_id)
+    brief = build_brief(task, venture, lead_id=lead_id, kind=kind, question=question)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")  # microseconds: no collision
     ddir = _dispatch_dir()
     bf = ddir / f"{ts}-brief.md"
@@ -123,6 +135,17 @@ def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None) ->
             ocon = ops.connect()
             try:
                 proposals.harvest(ocon, ts)
+            finally:
+                ocon.close()
+        except Exception:
+            pass
+        try:
+            # counsel: fill the answer for REGISTERED ask/advise runs (no-op for
+            # ordinary dispatches) — before on_exit so the reload shows the answer
+            from . import counsel
+            ocon = ops.connect()
+            try:
+                counsel.harvest(ocon, ts)
             finally:
                 ocon.close()
         except Exception:

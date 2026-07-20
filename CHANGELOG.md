@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.10.0 — 2026-07-20 · "the advisor"
+
+The console stops waiting for you and starts thinking.
+
+- **Ask the board anything** — a 🧠 ask bar on NOW: your question is dispatched to
+  your agent CLI with the full live context; the answer renders as first-class
+  console content on `/counsel` (escape-first, link-free markdown — agent prose is
+  untrusted input), any plan comes back as ▶-dispatchable steps, and any
+  ` ```opsroom ` blocks become one-tap proposals as usual.
+- **The autonomous advisor** — `[agent] advise = "daily"` or an hour interval
+  (2..168): opsroom launches the agent BY ITSELF on a schedule to assess the whole
+  board and surface 3-5 plays BEYOND the derived DO NOW. You open the console to a
+  🧠 TODAY'S BRIEFING that was thought up while you were away. This is opsroom's
+  first unattended agent launch, so it's a second opt-in beyond `enabled`, its
+  task string is a hard-coded constant, it fires at most once per window
+  (claim-first, crash-safe), and never while other work runs.
+- **Counsel protocol** — one ` ```counsel ` markdown answer block (16KB cap) + one
+  ` ```counsel-plan ` JSON block (≤7 steps, numbered-line fallback); harvested
+  only from runs opsroom itself registered — a fence smuggled into an ordinary
+  run's log is ignored. Threat model in `opsroom/counsel.py`.
+- Demo seeds an autonomous briefing; gate count 22 (new: tests/test_counsel.py).
+
 ## 0.9.0 — 2026-07-20 · "the operator loop"
 
 The release where opsroom stops only reporting the business and starts running it,

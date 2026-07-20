@@ -251,6 +251,62 @@ def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
             f"<h3>🟢 AGENTS RUNNING — {head}</h3></div><div class='sess-row'>{chips}</div></div>")
 
 
+def md_html(md: str) -> str:
+    """Deliberately tiny markdown renderer for AGENT PROSE (untrusted input).
+    esc() runs FIRST on everything; only headings, bold, code, and lists are then
+    reconstructed. NO links, NO images, NO raw HTML ever — a URL (or an injected
+    javascript: string) renders as inert text."""
+    text = esc((md or "")[:16 * 1024])
+
+    def inline(s: str) -> str:
+        s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+        return re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+
+    out, mode, buf = [], "", []
+
+    def flush():
+        nonlocal mode, buf
+        if not buf:
+            mode = ""
+            return
+        if mode == "ul":
+            out.append("<ul>" + "".join(f"<li>{inline(b)}</li>" for b in buf) + "</ul>")
+        elif mode == "ol":
+            out.append("<ol>" + "".join(f"<li>{inline(b)}</li>" for b in buf) + "</ol>")
+        else:
+            out.append(f"<p>{inline(' '.join(buf))}</p>")
+        mode, buf = "", []
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            flush()
+            continue
+        if s.startswith("####") or s.startswith("###"):
+            flush()
+            out.append(f"<h5>{inline(s.lstrip('#').strip())}</h5>")
+        elif s.startswith("##") or s.startswith("#"):
+            flush()
+            out.append(f"<h4>{inline(s.lstrip('#').strip())}</h4>")
+        elif s.startswith("- ") or s.startswith("* "):
+            if mode != "ul":
+                flush()
+                mode = "ul"
+            buf.append(s[2:].strip())
+        elif re.match(r"^\d{1,2}\.\s+", s):
+            if mode != "ol":
+                flush()
+                mode = "ol"
+            buf.append(re.sub(r"^\d{1,2}\.\s+", "", s))
+        else:
+            if mode in ("ul", "ol"):
+                flush()
+            mode = mode or "p"
+            buf.append(s)
+    flush()
+    return "".join(out)
+
+
 _PROP_TAGS = {"cash": ("CASH", "go"), "spend": ("SPEND", "warn"),
               "lead_add": ("LEAD", "go"), "lead_touch": ("LEAD", "cool"),
               "touch": ("TOUCH", "cool"), "followup": ("FOLLOW UP", "cool"),
@@ -431,7 +487,8 @@ def _serve_now_block(sx, st) -> str:
         missed_html = (f"<div class='banner bad'>☎ {sx['missed_calls']} missed calls in the last "
                        f"lead drop — numberless notifications; only your lead source shows who called."
                        + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray") + "</div>")
-    stack = _proposals_strip(sx) + _do_now_stack(sx, st, tok)
+    stack = (_counsel_card(sx) + _ask_bar(sx) + _proposals_strip(sx)
+             + _do_now_stack(sx, st, tok))
     vopts = _vopts()
     quick = f"""<details class="card logit"><summary>✍️ LOG IT — record a touch, cash, or lead (every touch schedules its day-3 follow-up)</summary>
 <div class="cardhead"><a class="btn small gray" href="/draft">✍ draft a reply</a></div>
@@ -758,6 +815,157 @@ function cp(){{var t=document.getElementById('out');t.select();
 </script>
 {refresh_js}
 </main></body></html>"""
+
+
+def _plan_rows(token, plan) -> str:
+    """Agent plan steps as actionable rows: ▶ opens the /do brief (inert until a
+    human tap), ⏳ queues through the normal CSRF-gated dispatch_queue verb."""
+    rows = ""
+    for i, s in enumerate(plan, 1):
+        why = f"<div class='ar-sub'>{esc(s.get('why') or '')}</div>" if s.get("why") else ""
+        rows += (f"<div class='ar'><span class='ar-tag cool'>{i}</span>"
+                 f"<div class='ar-body'><div class='ar-title'>{esc(s['task'])}</div>{why}</div>"
+                 f"<div class='ar-acts'>"
+                 f"<a class='btn small' href='{esc(do_url(s['task'], s.get('venture') or ''))}'>▶</a>"
+                 + _f(token, {"do": "dispatch_queue", "task": s["task"],
+                              "venture": s.get("venture") or ""}, "⏳", "btn small gray")
+                 + "</div></div>")
+    return rows
+
+
+def counsel_page(token, row, status, tail, props, history, agent_on) -> str:
+    """The /counsel page: the question, live thinking status, then the rendered
+    answer + THE PLAN (▶-dispatchable) + this run's proposals. All agent prose
+    goes through md_html (escape-first, link-free)."""
+    banner = body = ""
+    refresh_js = ""
+    if row:
+        title = (esc(row["question"]) if row["kind"] == "ask" and row["question"]
+                 else "Advisor briefing")
+        if status == "running":
+            banner = ("<div class='card' style='border-color:var(--go-line)'>"
+                      "<b style='color:var(--go)'>🧠 thinking…</b> The agent is reading "
+                      "your board. This page refreshes itself.</div>")
+            refresh_js = "<script>setTimeout(function(){location.reload()},4000)</script>"
+        elif status.startswith("exit"):
+            banner = (f"<div class='card'><b>⚠ agent ended with {esc(status)}.</b> "
+                      f"The log tail below has the details.</div>")
+        if row["answer"]:
+            body = f"<div class='card'><label>the counsel</label>{md_html(row['answer'])}</div>"
+        elif status in ("done",) or status.startswith("exit"):
+            body = ("<div class='card'><p class='hint'>The agent finished without a "
+                    "```counsel block — its raw output is below.</p></div>")
+        if row["plan"]:
+            body += (f"<div class='card action'><label>THE PLAN — {len(row['plan'])} steps, "
+                     f"each ▶ opens the full brief</label>{_plan_rows(token, row['plan'])}</div>")
+        prop_rows = ""
+        for p in props or []:
+            tag, tagcls = _PROP_TAGS.get(p["verb"], (p["verb"].upper()[:10], "dim"))
+            prop_rows += _stack_row(
+                tag, tagcls, esc(p["summary"]), "",
+                _f(token, {"do": "proposal_apply", "pid": p["id"]}, "✓ apply")
+                + _f(token, {"do": "proposal_dismiss", "pid": p["id"]}, "×", "btn small gray"))
+        if prop_rows:
+            body += (f"<div class='card action stack'><label>proposals from this run — "
+                     f"nothing applies without your tap</label>{prop_rows}</div>")
+        if tail and (not row["answer"] or status.startswith("exit")):
+            body += (f"<div class='card'><details open><summary>log tail</summary>"
+                     f"<pre style='white-space:pre-wrap;font-size:12px;color:var(--dim);"
+                     f"max-height:280px;overflow:auto'>{esc(tail)}</pre></details></div>")
+        if row["answer"]:
+            body += _f(token, {"do": "counsel_archive", "cid": row["id"]},
+                       "✓ archive this counsel", "btn gray")
+    else:
+        title = "nothing asked yet"
+        body = ("<div class='card'><p class='hint'>Ask a question below — the agent "
+                "answers with your whole live board as context.</p></div>")
+    ask_form = f"""<div class="card"><form method="post" action="/act">
+<input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="do" value="ask">
+<label>ask another</label>
+<div class="row"><input name="question" maxlength="500" required
+ placeholder="what should I do about…"><select name="venture">{_vopts()}</select>
+<button class="btn small" style="flex:0">🧠 ask</button></div></form>
+{'' if agent_on else "<p class='hint'>[agent] is disabled — the brief will be written for copy-paste into any AI; enable one-tap runs in config.toml.</p>"}</div>"""
+    hist_rows = "".join(
+        f"<tr><td style='white-space:nowrap'>{esc(h['created'][:10])}</td>"
+        f"<td>{'🧠' if h['kind'] == 'advise' else '?'}</td>"
+        f"<td><a href='/counsel?ts={esc(h['dispatch_ts'])}'>"
+        f"{esc(h['question'][:70] or 'Advisor briefing')}</a></td></tr>"
+        for h in history or [])
+    hist = (f"<div class='card'><label>recent counsel</label>"
+            f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{hist_rows}</table></div>"
+            if hist_rows else "")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>COUNSEL · opsroom</title><style>{DRAFT_CSS}
+main{{max-width:860px}}
+table td{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;color:var(--dim)}}
+.ar{{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}}
+.ar-tag{{font:700 11px var(--mono);border:1px solid var(--line);border-radius:6px;padding:2px 7px}}
+.ar-tag.cool{{color:var(--cool)}}
+.ar-body{{flex:1}}.ar-title{{font-weight:600}}.ar-sub{{color:var(--dim);font-size:13px}}
+.ar-acts{{display:flex;gap:5px}}form.inline{{display:inline}}
+.btn.small{{padding:4px 10px;margin-top:0;font-size:13px}}
+h4,h5{{margin:12px 0 4px}}ol,ul{{margin:6px 0;padding-left:22px}}
+</style></head><body><main>
+<a href="/">← back to the console</a>
+<h1 style="margin-top:10px"><span class="bolt">🧠</span> COUNSEL</h1>
+<div class="card"><label>{'the question' if row and row['kind'] == 'ask' else 'the briefing'}</label>
+<div style="font-size:16px"><b>{title}</b></div></div>
+{banner}
+{body}
+{ask_form}
+{hist}
+{refresh_js}
+</main></body></html>"""
+
+
+def _counsel_card(sx) -> str:
+    """The 🧠 card on NOW: the latest open counsel, collapsed. The morning ritual —
+    'the board thought while you were away; here's the verdict.'"""
+    row = sx.get("counsel")
+    if not row:
+        return ""
+    tok = sx["token"]
+    ts_link = f"/counsel?ts={esc(row['dispatch_ts'])}"
+    if not row["answer"]:
+        # registered but not answered yet: thinking chip, not an empty card
+        return (f"<div class='card' style='border-color:var(--go-line)'>"
+                f"<b style='color:var(--go)'>🧠 thinking…</b> "
+                f"<a href='{ts_link}'>watch it live →</a></div>")
+    label = "TODAY'S BRIEFING" if row["kind"] == "advise" else "COUNSEL"
+    when = esc((row["created"] or "")[11:16])
+    nplays = len(row["plan"])
+    nprops = sx.get("counsel_nprops") or 0
+    meta = " · ".join(b for b in (
+        f"{nplays} play{'s' if nplays != 1 else ''}" if nplays else "",
+        f"{nprops} proposal{'s' if nprops != 1 else ''}" if nprops else "") if b)
+    preview = md_html(row["answer"][:1500])
+    more = (f"<p><a href='{ts_link}'>read the rest + the plan →</a></p>"
+            if len(row["answer"]) > 1500 or nplays else
+            f"<p><a href='{ts_link}'>open →</a></p>")
+    return (f"<details class='card' open><summary>🧠 {label} — {when}"
+            f"{' · ' + meta if meta else ''} <a href='{ts_link}'>open →</a></summary>"
+            f"{preview}{more}"
+            + _f(tok, {"do": "counsel_archive", "cid": row["id"]}, "✓ archive",
+                 "btn small gray")
+            + "</details>")
+
+
+def _ask_bar(sx) -> str:
+    """'Ask the board anything' — the console stops being a mirror you read and
+    becomes a partner you talk to."""
+    tok = sx["token"]
+    if not sx.get("agent_on"):
+        return ("<div class='card'><p class='hint'>🧠 Want to ask your board questions "
+                "and get a morning briefing? Enable <code>[agent]</code> in config.toml "
+                "— see README.</p></div>")
+    return f"""<div class="card"><form method="post" action="/act" class="row">
+<input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="ask">
+<input name="question" maxlength="500" required style="flex:3"
+ placeholder="🧠 ask the board anything — what should I do about…">
+<select name="venture" style="flex:1">{_vopts()}</select>
+<button class="btn small" style="flex:0">ask</button></form></div>"""
 
 
 def _search_panel(sx):
