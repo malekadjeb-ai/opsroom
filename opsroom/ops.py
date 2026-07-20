@@ -259,6 +259,61 @@ def leads_open(con) -> list:
            ORDER BY COALESCE(last_touch, added) DESC""").fetchall()
 
 
+_LEAD_SORTS = {  # whitelist: sort key -> ORDER BY (never interpolate user input)
+    "newest": "COALESCE(last_touch, added) DESC",
+    "aged": "COALESCE(last_touch, added) ASC",
+    "quoted": "COALESCE(quoted, 0) DESC, COALESCE(last_touch, added) DESC",
+}
+
+
+def leads_all(con, q: str = "", status: str = "", sort: str = "newest") -> list:
+    """The full-workspace query: every lead, filterable and sortable. Same
+    %_-escaped LIKE discipline as search_ops — query text is always literal."""
+    where, params = [], []
+    if q:
+        pat = "%" + q.replace("\\", r"\\").replace("%", r"\%").replace("_", r"\_") + "%"
+        where.append(r"(name LIKE ? ESCAPE '\' OR phone LIKE ? ESCAPE '\' "
+                     r"OR service LIKE ? ESCAPE '\' OR note LIKE ? ESCAPE '\')")
+        params += [pat] * 4
+    if status == "open":
+        where.append("status IN ('open','working')")
+    elif status == "quoted":
+        where.append("quoted IS NOT NULL AND status IN ('open','working')")
+    elif status in ("won", "lost"):
+        where.append("status = ?")
+        params.append(status)
+    sql = "SELECT * FROM leads"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY " + _LEAD_SORTS.get(sort, _LEAD_SORTS["newest"])
+    return con.execute(sql, params).fetchall()
+
+
+def lead_get(con, lead_id: int):
+    return con.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+
+
+def lead_touches(con, name: str, limit: int = 8) -> list:
+    """A lead's recent touch history (by target name) — feeds the dispatch brief."""
+    return con.execute(
+        "SELECT * FROM touches WHERE lower(target)=lower(?) ORDER BY ts DESC LIMIT ?",
+        (name, limit)).fetchall()
+
+
+def leads_counts(con) -> dict:
+    """Counts for the workspace filter chips."""
+    out = {"all": 0, "open": 0, "quoted": 0, "won": 0, "lost": 0}
+    for r in con.execute("SELECT status, quoted, COUNT(*) c FROM leads GROUP BY 1, quoted IS NULL"):
+        out["all"] += r["c"]
+        if r["status"] in ("open", "working"):
+            out["open"] += r["c"]
+            if r["quoted"] is not None:
+                out["quoted"] += r["c"]
+        elif r["status"] in ("won", "lost"):
+            out[r["status"]] += r["c"]
+    return out
+
+
 def touches_recent(con, limit: int = 25) -> list:
     return con.execute("SELECT * FROM touches ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
 

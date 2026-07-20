@@ -150,6 +150,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, _page(search_q=q))
             except Exception as e:
                 self._send(500, f"search failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
+        elif url.path == "/leads":
+            from . import dashboard
+            qs = urllib.parse.parse_qs(url.query)
+            q = (qs.get("q") or [""])[0].strip()[:120]
+            status = (qs.get("status") or [""])[0]
+            status = status if status in ("open", "quoted", "won", "lost") else ""
+            sort = (qs.get("sort") or ["newest"])[0]
+            sort = sort if sort in ("newest", "aged", "quoted") else "newest"
+            ocon = ops.connect()
+            try:
+                rows = ops.leads_all(ocon, q, status, sort)
+                counts = ops.leads_counts(ocon)
+                self._send(200, dashboard.leads_page(
+                    TOKEN, rows, counts, q, status, sort).encode())
+            except Exception as e:
+                self._send(500, f"leads failed:\n{type(e).__name__}: {e}".encode(),
+                           "text/plain; charset=utf-8")
+            finally:
+                ocon.close()
         elif url.path == "/draft":
             from . import dashboard, drafts
             qs = urllib.parse.parse_qs(url.query)
@@ -170,10 +189,14 @@ class Handler(BaseHTTPRequestHandler):
             if launched and not dispatch.TS_RE.match(launched):
                 launched = ""
             try:
-                brief = dispatch.build_brief(task, venture) if task else ""
+                lead = int((qs.get("lead") or ["0"])[0])
+            except ValueError:
+                lead = 0
+            try:
+                brief = dispatch.build_brief(task, venture, lead_id=lead) if task else ""
                 self._send(200, dashboard.do_page(
                     TOKEN, task, venture, brief, dispatch.agent_ready(),
-                    history=dispatch.recent(), launched_ts=launched).encode())
+                    history=dispatch.recent(), launched_ts=launched, lead=lead).encode())
             except Exception as e:
                 self._send(500, f"brief failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/context":
@@ -274,13 +297,18 @@ class Handler(BaseHTTPRequestHandler):
                 if not task:
                     self._send(400, b"no task")
                     return
+                try:
+                    lead = int(form.get("lead") or 0)
+                except ValueError:
+                    lead = 0
                 # the reaper bumps /version when the agent exits, so every open
                 # console refreshes itself the moment the work finishes
-                result = dispatch.dispatch(task, venture, on_exit=_bump)
+                result = dispatch.dispatch(task, venture, on_exit=_bump, lead_id=lead)
                 _bump()
                 # PRG: redirect so the /do page can live-refresh without re-POSTing
                 loc = "/do?" + urllib.parse.urlencode(
-                    {"task": task, "venture": venture, "launched": result["ts"]})
+                    {"task": task, "venture": venture, "launched": result["ts"],
+                     **({"lead": str(lead)} if lead else {})})
                 self._send(303, b"", extra={"Location": loc})
                 return
             elif do == "proposal_apply":

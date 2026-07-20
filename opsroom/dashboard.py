@@ -322,7 +322,7 @@ def _do_now_stack(sx, st, tok) -> str:
         aged = age >= 7
         vents = [r["venture"] for r in leads if r["venture"]]
         vk = max(set(vents), key=vents.count) if vents else ""
-        btns = (f"<a class='btn small' href='#leadwork'>work them →</a>"
+        btns = (f"<a class='btn small' href='/leads?status=open&sort=aged'>work them →</a>"
                 f"<a class='btn small gray' href='{esc(do_url(('Call the open leads newest first' + (f' for {vk}' if vk else '')), vk))}'>▶</a>")
         items.append((84 if aged else 62, _stack_row(
             "LEADS", "warn" if aged else "cool",
@@ -440,9 +440,10 @@ def _serve_now_block(sx, st) -> str:
         + "</td></tr>" for r in sx["leads"][:20])
     n_leads = len(sx["leads"])
     more = (f"<p class='hint'>showing the 20 newest of {n_leads} — "
-            f"use the search box above to find a specific lead</p>" if n_leads > 20 else "")
+            f"<a href='/leads'>open the full workspace →</a></p>" if n_leads > 20 else "")
     leads_html = (f"<details class='card' id='leadwork'><summary>📇 LEADS worklist — "
-                  f"{n_leads} open (newest first — speed to lead wins)</summary>"
+                  f"{n_leads} open (newest first — speed to lead wins) · "
+                  f"<a href='/leads'>full workspace →</a></summary>"
                   f"<table>{lead_rows}</table>{more}</details>" if sx["leads"] else "")
     return missed_html + tape_html + stack + quick + cap_html + leads_html
 
@@ -524,13 +525,102 @@ offer line and style you set per venture in config.toml. Deterministic, local, n
 </main></body></html>"""
 
 
-def do_url(task: str, venture: str = "") -> str:
-    q = urllib.parse.urlencode({"task": (task or "")[:300], "venture": venture or ""})
-    return f"/do?{q}"
+def do_url(task: str, venture: str = "", lead: int = 0) -> str:
+    params = {"task": (task or "")[:300], "venture": venture or ""}
+    if lead:
+        params["lead"] = str(lead)
+    return "/do?" + urllib.parse.urlencode(params)
+
+
+def _lead_age(r, today) -> int:
+    try:
+        return (today - datetime.fromisoformat(
+            (r["last_touch"] or r["added"] or "")[:10]).date()).days
+    except ValueError:
+        return 0
+
+
+def _lead_actions(tok, r) -> str:
+    """The per-lead action set — identical semantics to the NOW-tab worklist, plus
+    a quoted-$ form and a per-lead ▶ dispatch that bakes the lead into the brief."""
+    task = f"Call {r['name']} about {r['service'] or 'their request'}"
+    return (
+        f"<a class='btn small gray' href='{esc(draft_url(r['venture'] or '', r['name']))}'>✍</a>"
+        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called"}, "☎ called")
+        + f"""<form class='inline' method='post' action='/act'>
+<input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
+<input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='quoted'>
+<input name='amount' placeholder='$' class='amt' inputmode='decimal'>
+<button class='btn small gray'>quoted</button></form>"""
+        + f"""<form class='inline' method='post' action='/act'>
+<input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
+<input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='collected'>
+<input name='amount' placeholder='$' class='amt' inputmode='decimal'>
+<button class='btn small'>collected</button></form>"""
+        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "lost"}, "lost", "btn small gray")
+        + f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or '', r['id']))}'>▶</a>")
+
+
+def leads_page(token, rows, counts, q="", status="", sort="newest") -> str:
+    """The /leads workspace: the WHOLE lead ledger — search, filter chips, sort,
+    and every action inline. The NOW-tab worklist is the 20-row teaser; this is
+    where a couple hundred leads actually get worked."""
+    today = datetime.now().astimezone().date()
+    def chip(key, label):
+        n = counts.get(key if key else "all", 0)
+        qs = urllib.parse.urlencode({"q": q, "status": key, "sort": sort})
+        cur = " style='color:var(--go);border-color:var(--go-line)'" if status == key else ""
+        return f"<a class='pill'{cur} href='/leads?{qs}'>{esc(label)} {n}</a>"
+    chips = (chip("", "all") + chip("open", "open") + chip("quoted", "quoted")
+             + chip("won", "won") + chip("lost", "lost"))
+    sopts = "".join(
+        f"<option value='{k}'{' selected' if sort == k else ''}>{lbl}</option>"
+        for k, lbl in (("newest", "newest first"), ("aged", "most aged first"),
+                       ("quoted", "biggest quote first")))
+    body_rows = []
+    for r in rows:
+        age = _lead_age(r, today)
+        agecls = "leak" if age >= 7 and r["status"] in ("open", "working") else "dim"
+        quoted = f" · quoted ${int(r['quoted']):,}" if r["quoted"] else ""
+        won = f" · collected ${int(r['collected']):,}" if r["collected"] else ""
+        body_rows.append(
+            f"<tr><td><b>{esc(r['name'])}</b><br><small>{_linkify(esc(r['phone'] or ''))}"
+            f" · {esc(r['service'] or '')} · {esc(r['status'])}{quoted}{won}</small></td>"
+            f"<td style='white-space:nowrap;color:var(--{agecls})'>~{age}d</td>"
+            f"<td class='acts'>{_lead_actions(token, r)}</td></tr>")
+    table = (f"<table style='width:100%;border-collapse:collapse'>{''.join(body_rows)}</table>"
+             if body_rows else "<p class='hint'>no leads match — clear the filters above,"
+             " or add leads from the NOW tab / a JSON drop.</p>")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LEADS · opsroom</title><style>{DRAFT_CSS}
+main{{max-width:1060px}}
+table td{{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
+.acts{{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}}
+.acts form.inline{{display:inline-flex;gap:3px;margin:0}}
+.btn.small{{padding:4px 9px;margin-top:0;font-size:12px}}
+input.amt{{width:64px;padding:4px 7px}}
+.chips{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0}}
+.pill:hover{{border-color:var(--go-line)}}
+</style></head><body><main>
+<a href="/">← back to the console</a>
+<h1 style="margin-top:10px"><span class="bolt">📇</span> LEADS — {len(rows)} shown of {counts.get('all', 0)}</h1>
+<p class="hint">Every lead is paid-for money. Filter, sort by age, and work the list —
+each ▶ dispatches an agent with this lead's full context baked into the brief.</p>
+<div class="card">
+<form method="get" action="/leads" class="row">
+<input name="q" value="{esc(q)}" placeholder="search name / phone / service / note">
+<input type="hidden" name="status" value="{esc(status)}">
+<select name="sort">{sopts}</select>
+<button class="btn small" style="flex:0">filter</button></form>
+<div class="chips">{chips}</div>
+{table}
+</div>
+</main></body></html>"""
 
 
 def do_page(token, task, venture, brief, agent_on, result=None, history=None,
-            launched_ts=None):
+            launched_ts=None, lead=0):
     """The /do page: the work brief (task + rails + live context), copy it into any
     agent, or one-tap dispatch to your configured local agent CLI. A dispatched run
     shows its live status and log tail — never fire-and-forget."""
@@ -559,6 +649,7 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
     send_btn = f"""<form method="post" action="/act" style="display:inline">
 <input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="do" value="dispatch">
 <input type="hidden" name="task" value="{esc(task)}"><input type="hidden" name="venture" value="{esc(venture)}">
+{f'<input type="hidden" name="lead" value="{int(lead)}">' if lead else ''}
 <button class="btn">{'🤖 send to your agent — runs it now' if agent_on else '🤖 write the brief file (agent launch disabled)'}</button></form>"""
     def _chip(s):
         if s == "running":

@@ -28,8 +28,9 @@ TS_RE = re.compile(r"^\d{8}-\d{6}-\d+$")  # dispatch ids are timestamps, never p
 _PROCS = {}  # ts -> Popen for dispatches launched by THIS console boot
 
 
-def build_brief(task: str, venture: str = "") -> str:
-    """The hand-off document: the task, the venture's rails, the live context pack."""
+def build_brief(task: str, venture: str = "", lead_id: int = None) -> str:
+    """The hand-off document: the task, the venture's rails, the lead's context
+    when dispatched from a lead row, and the live context pack."""
     task = (task or "").strip()[:MAX_TASK]
     meta = ventures.VENTURES.get(venture, {})
     lines = ["# DISPATCH — do this now", "", f"TASK: {task}"]
@@ -40,10 +41,26 @@ def build_brief(task: str, venture: str = "") -> str:
         rails.append(f"- Canon offer (quote verbatim, never discount): {meta['offer']}")
     if rails:
         lines += ["", "## RAILS (non-negotiable)"] + rails
-    lines += ["", "## LIVE OPERATOR CONTEXT", ""]
     con = db.connect()
     ocon = ops.connect()
     try:
+        if lead_id:
+            row = ops.lead_get(ocon, lead_id)
+            if row:
+                lines += ["", "## LEAD CONTEXT",
+                          f"- lead id: {row['id']} (use this id in lead_touch proposals)",
+                          f"- name: {row['name']}"]
+                for label, val in (("phone", row["phone"]), ("service", row["service"]),
+                                   ("status", row["status"]), ("note", row["note"])):
+                    if val:
+                        lines.append(f"- {label}: {val}")
+                if row["quoted"]:
+                    lines.append(f"- quoted: ${int(row['quoted']):,}")
+                hist = ops.lead_touches(ocon, row["name"])
+                if hist:
+                    lines.append("- recent touches: " + "; ".join(
+                        f"{t['ts'][:10]} {t['kind']}" for t in hist))
+        lines += ["", "## LIVE OPERATOR CONTEXT", ""]
         lines.append(contextpack.build(con, ocon, state.build_state(con)))
     finally:
         con.close()
@@ -72,12 +89,12 @@ def _open_600(path: Path):
     return open(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w")
 
 
-def dispatch(task: str, venture: str = "", on_exit=None) -> dict:
+def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None) -> dict:
     """Write the brief; if [agent] enabled, launch the configured CLI on it,
     detached, output to a log file. Returns {brief, log, launched, ts}.
     on_exit (optional) fires from a reaper thread when the agent finishes, so
     open consoles can refresh themselves the moment the work is done."""
-    brief = build_brief(task, venture)
+    brief = build_brief(task, venture, lead_id=lead_id)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")  # microseconds: no collision
     ddir = _dispatch_dir()
     bf = ddir / f"{ts}-brief.md"
