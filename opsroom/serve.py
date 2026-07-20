@@ -21,9 +21,10 @@ import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
-from . import contextpack, db, dispatch, enrich, inbox, ops, promises, proposals, \
-    sessions, state, ventures, views
+from . import config, contextpack, db, dispatch, enrich, inbox, ops, promises, \
+    proposals, sessions, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -81,6 +82,7 @@ def _page(search_q=None) -> bytes:
             "roi": ops.roi_rows(ocon), "sessions": sessions.summary(),
             "dispatches": dispatch.running(),
             "proposals": proposals.pending(ocon),
+            "setup_needed": config.setup_needed(),
         }
         search_ctx = None
         if search_q is not None:
@@ -331,6 +333,45 @@ class Handler(BaseHTTPRequestHandler):
                         raise
             elif do == "proposal_dismiss":
                 proposals.dismiss(ocon, int(form["pid"]))
+            elif do == "setup_save":
+                from . import setup
+                if not config.setup_needed(config.load(force=True)):
+                    self._send(409, b"config already has a goal or ventures - "
+                                    b"edit config.toml or rerun opsroom init")
+                    return
+                amt = _money(form.get("goal_amount"))
+                if not (amt and amt > 0):
+                    self._send(400, b"goal amount must be a positive number")
+                    return
+                goal = {"amount": int(amt),
+                        "deadline": form.get("goal_deadline", "").strip()[:10],
+                        "label": form.get("goal_label", "").strip()[:80]}
+                vs, seen = [], set()
+                for i in (1, 2, 3):
+                    name = form.get(f"v{i}_name", "").strip()[:80]
+                    if not name:
+                        continue
+                    key = setup.slug(name)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    needles = [key]
+                    path = form.get(f"v{i}_path", "").strip()[:120]
+                    base = Path(path).name.lower() if path else ""
+                    if base and base != key:
+                        needles.append(base)  # folder name only — stored, never executed
+                    vs.append({"key": key, "label": name, "trap": False,
+                               "offer": form.get(f"v{i}_offer", "").strip()[:200],
+                               "needles": needles})
+                try:
+                    setup.write_web_setup(goal, vs)
+                except ValueError as ve:
+                    # e.g. a settings-only config that already has [agent]:
+                    # the page must never rewrite it
+                    self._send(409, str(ve).encode(), "text/plain; charset=utf-8")
+                    return
+                config.load(force=True)
+                ventures.refresh()  # the console re-renders configured, no restart
             else:
                 self._send(400, b"unknown action")
                 return

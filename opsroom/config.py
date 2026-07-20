@@ -81,6 +81,13 @@ def load(force: bool = False) -> dict:
     return cfg
 
 
+def setup_needed(cfg=None) -> bool:
+    """A truly fresh install: no goal AND no ventures. This is the one state where
+    the console offers on-page setup instead of the 'go edit TOML' cliff."""
+    cfg = cfg or load()
+    return not goal_amount(cfg) and not cfg["ventures"]
+
+
 def goal_deadline(cfg=None):
     g = (cfg or load())["goal"]
     try:

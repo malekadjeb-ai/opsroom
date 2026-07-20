@@ -377,6 +377,34 @@ def _venture_of(r):
     return ""
 
 
+def setup_card(token) -> str:
+    """First-run onboarding ON the page: set the goal and ventures right here —
+    no TOML editing. Deliberately cannot touch [agent]; that stays terminal-only."""
+    vrows = "".join(f"""<div class="row" style="margin-top:6px">
+<input name="v{i}_name" placeholder="venture {i} — name{' (required for the first)' if i == 1 else ' (optional)'}"{' required' if i == 1 else ''}>
+<input name="v{i}_path" placeholder="repo folder name (optional — ties activity to it)">
+<input name="v{i}_offer" placeholder="canon offer, one sentence + price (optional)">
+</div>""" for i in (1, 2, 3))
+    return f"""<div class="card action" id="setup">
+<div class="cardhead"><h3>⚡ SET UP YOUR ROOM — 60 seconds, no config files</h3></div>
+<p class="hint">Name the goal and the ventures; the console configures itself and
+starts building your board. You can refine everything later in config.toml.</p>
+<form method="post" action="/act">
+<input type="hidden" name="token" value="{esc(token)}"><input type="hidden" name="do" value="setup_save">
+<div class="row">
+<input name="goal_amount" placeholder="cash goal, e.g. 25000" inputmode="numeric" required>
+<input name="goal_deadline" type="date">
+<input name="goal_label" placeholder="goal label (optional), e.g. Q3 sprint">
+</div>
+{vrows}
+<button class="btn small" style="margin-top:10px">⚡ start operating</button>
+</form>
+<p class="hint" style="margin-top:8px">Want to see it loaded first? Run <b>opsroom demo</b> —
+a fictional 3-venture console on its own port; your real ledger stays untouched.<br>
+One-tap agent dispatch (<code>[agent]</code>) stays terminal-only — enable it by
+editing config.toml yourself.</p></div>"""
+
+
 def _serve_now_block(sx, st) -> str:
     """The reorganized NOW: today's momentum tape, the single ranked DO NOW stack,
     the LOG IT quick-actions, the inbox, and the full leads worklist (collapsed)."""
@@ -919,7 +947,8 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
         momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
         sess_strip = _sessions_strip(serve_ctx.get("sessions"),
                                      serve_ctx.get("dispatches"))
-        now_tab = (ribbon + leak + momentum + sess_strip
+        setup = setup_card(serve_ctx["token"]) if serve_ctx.get("setup_needed") else ""
+        now_tab = (setup + ribbon + leak + momentum + sess_strip
                    + _serve_now_block(serve_ctx, st)
                    + (f"<p>{stale}</p>" if stale else ""))
     else:
