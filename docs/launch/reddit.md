@@ -19,8 +19,12 @@ are running right now (interactive/cowork/background), attributed per project.
 
 Then it goes further than a dashboard: the console is a local app where everything
 worth doing collapses into one ranked DO NOW list, and any action can be handed back
-to your local agent CLI with a full context brief. Measurement → action → back to
-the agent.
+to your local agent CLI with a full context brief. And the loop now closes both
+ways — when the dispatched session finishes, opsroom parses the agent's output into
+proposed ledger writes ("record $380 collected", "schedule the follow-up", "run
+this next") that wait as pending rows for your one-tap approval. Nothing applies
+without your tap; agent output is treated as untrusted input (strict verb
+whitelist, redaction, caps).
 
 Local-only (SQLite, no network egress, fail-closed secret redaction since it reads
 terminal history). `pipx install opsroom-console && opsroom demo` shows a fictional loaded

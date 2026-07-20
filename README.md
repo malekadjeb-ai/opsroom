@@ -5,7 +5,7 @@
 ![deps](https://img.shields.io/badge/dependencies-zero-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-**Your AI agents write code all day. opsroom shows you whether any of it pays.**
+**Your AI agents write code all day. opsroom shows you whether any of it pays — then closes the loop: agents propose, you approve, the ledger moves.**
 
 ![opsroom demo — sitrep, by-agent, trap-zone alert](https://raw.githubusercontent.com/malekadjeb-ai/opsroom/main/docs/launch/demo.gif)
 
@@ -18,9 +18,10 @@ No cloud. No accounts. No dependencies. One Python package, one SQLite file on y
 ```
 pipx install opsroom-console   # or: pip install opsroom-console / uv tool install opsroom-console
 opsroom demo             # a fully loaded LIVE console in 10 seconds (fictional data)
-opsroom init             # wire up YOUR repos, goal, and notes
 opsroom serve            # your console: live, writable, auto-refreshing
 ```
+
+A fresh install's console opens with an on-page **SET UP YOUR ROOM** card — name the goal and your ventures right there and start operating; no config files. (`opsroom init` is the terminal equivalent, and config.toml stays yours to refine.)
 
 ## What you get
 
@@ -39,6 +40,12 @@ opsroom serve            # your console: live, writable, auto-refreshing
 **🟢 AGENTS RUNNING — see your live sessions, cowork and all.** opsroom reads which Claude Code sessions are alive right now (interactive, cowork, background), attributes each to a venture, and flags the cowork/background ones — so you can see an agent working for you on a venture as it happens, not just after the fact in the rollup.
 
 **▶ DO IT — every action becomes a hand-off, and your agents close the loop.** opsroom reads what your AI agents did all day; now it writes back. Every queued action — the top cash move, a DO NEXT step, a due follow-up, a staged promise — gets a ▶ button that opens the full work brief: the task, your config rails, and the live operator context. Copy it into any AI chat, or opt in (`[agent] enabled = true` in config) and one tap launches your local agent CLI (e.g. `claude -p`) on the brief, detached, logged locally. The command comes only from your config, the brief is passed as a single argument, and it's off by default.
+
+**🤖 AGENT PROPOSES — the operator loop.** The return leg of dispatch: when an agent finishes a run, opsroom parses its output for fenced ` ```opsroom ` JSON blocks — "record $380 collected", "schedule the day-2 follow-up", "here's a new lead", "run this next" — and stages them as **pending proposals** on the console. Nothing applies automatically, ever: each proposal is one tap to apply (through the same write path as your own buttons) or dismiss, with a provenance link to the raw log. The verbs are a strict whitelist of things you could already do by hand; everything is scrubbed, size-capped, and double-tap-safe. Your agents work, propose, and wait for your tap — the ledger only moves when you say so.
+
+**⏳ WORK QUEUE — dispatches chain.** Fire a second dispatch while an agent is running and it queues, auto-firing FIFO when the runner finishes. An agent can even propose its own next run; your tap chains it. Queued work shows as chips in AGENTS RUNNING with one-tap dismiss.
+
+**📇 LEADS WORKSPACE — the whole register, workable.** `/leads` is a full page over every lead you've ever captured: search, status chips (open/quoted/won/lost), age and quote-size sorts, and every action inline — call, quote, collect, lost, draft. Each lead's ▶ dispatches an agent with that lead's id, contact, quote and touch history baked into the brief.
 
 **🔥 REPLIED + LEADS — the hot list, fed by anything.** Drop a small JSON file (from an AI agent session reading your mail, a CRM export, a webhook you pipe to disk) and opsroom merges it: new leads dedup by phone into the register, and a reply from someone you pitched hits the top of NOW as a call-these-first block with a one-tap drafted answer. Replies schedule the call for **today**, not the day-3 cadence — a live reply is the hottest thing on the board. The drop file is the boundary: opsroom itself never touches the network.
 
@@ -98,6 +105,7 @@ This tool reads your terminal history and notes, so it's built paranoid:
 - **No network egress. Ever.** Nothing phones home; the console HTML loads zero external resources. The only URLs are ones *you* configured as buttons.
 - **Local only** — SQLite at `~/.local/share/opsroom` with `600` perms, refuses to live under a cloud-sync root (iCloud/Dropbox/OneDrive).
 - **Read-only on all sources** — your notes are never written; the only writes are the ledger and an optional append-only daily note.
+- **Agent output is untrusted input** — proposals never auto-apply. They're parsed fail-closed (strict verb whitelist onto existing write actions, size caps, redaction, idempotent staging) and every one waits for your CSRF-gated tap. A hostile or prompt-injected agent log can at worst put a visible pending row on your board, with a link to the log that produced it.
 - `opsroom purge --source=X` / `--before=DATE` to shrink the blast radius any time.
 
 ## Philosophy

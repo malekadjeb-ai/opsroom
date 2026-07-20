@@ -242,6 +242,58 @@ def run(serve_console: bool = True):
             "venture": "meridian", "msg_id": "demo-reply-1"}]})
         ops.kv_set(oc, "missed_calls", "2")
         ops.capture(oc, "Shopkit pro tier: test $79/mo before touching base pricing")
+
+        # ---- a leads ledger worth a WORKSPACE (/leads): more rows, every status,
+        # believable ages — so filters, sorts and the aged view have teeth
+        aged = []
+        for name, phone, svc, note, days_old in [
+                ("Sasha Whitfield", "5550101201", "full detail", "wants the ceramic bundle", 9),
+                ("Robin Falco", "5550101322", "interior", "asked twice about Saturday", 8),
+                ("Emerson Quill", "5550101488", "full detail", "from the referral card", 6),
+                ("Devon Pratt", "5550101550", "ceramic add-on", "price-shopping, warm", 5),
+                ("Lennox Vega", "5550101673", "interior", "voicemail left", 3),
+                ("Harper Stone", "5550101744", "full detail", "booked once before", 2)]:
+            lid = ops.add_lead(oc, name, phone, svc, note, venture="detailpro")
+            aged.append((lid, days_old))
+        won1 = ops.add_lead(oc, "Micah Reyes", "5550101819", "full detail",
+                            "repeat customer", venture="detailpro")
+        # won directly: their $249 is already inside the "2 details collected"
+        # cash entry above — touch_lead would double-count it
+        oc.execute("UPDATE leads SET status='won', collected=249, last_touch=? WHERE id=?",
+                   (now.isoformat(), won1))
+        lost1 = ops.add_lead(oc, "Perry Nolan", "5550101930", "interior",
+                             "went with a cheaper quote", venture="detailpro")
+        ops.touch_lead(oc, lost1, "lost")
+        for lid, days_old in aged:  # backdate so the aged sort shows real decay
+            back = (now - timedelta(days=days_old)).isoformat()
+            oc.execute("UPDATE leads SET added=?, last_touch=NULL WHERE id=?", (back, lid))
+        oc.commit()
+
+        # ---- the OPERATOR LOOP, pre-loaded: a finished agent run whose output
+        # became pending proposals. The provenance link opens this very log.
+        from . import dispatch as _dispatch, proposals
+        ddir = config.data_dir() / "dispatch"
+        ddir.mkdir(parents=True, exist_ok=True)
+        ddir.chmod(0o700)
+        ts = (now - timedelta(minutes=18)).strftime("%Y%m%d-%H%M%S-%f")
+        brief = ("# DISPATCH — do this now\n\nTASK: Work the DetailPro quote backlog\n"
+                 "VENTURE: DetailPro\n\n(demo brief — fictional)\n")
+        log = ("read the brief. Calling the quote backlog…\n"
+               "- Casey Ito picked up: interior confirmed, PAID $380 on the card.\n"
+               "- Summit Fabrication: Chris asked for a written quote by Thursday.\n"
+               "- Two aged quotes still unanswered — a text blast is the next move.\n"
+               "Proposing results:\n"
+               '```opsroom\n{"propose": "cash", "amount": 380, "venture": "detailpro",'
+               ' "what": "Casey Ito interior — collected on card"}\n```\n'
+               '```opsroom\n{"propose": "followup", "target": "Summit Fabrication",'
+               ' "due": "+2d", "venture": "meridian", "note": "written quote by Thursday"}\n```\n'
+               '```opsroom\n{"propose": "dispatch", "task": "Text the two aged interior'
+               ' quotes the $189 price with a Saturday slot", "venture": "detailpro"}\n```\n')
+        for fname, text in ((f"{ts}-brief.md", brief), (f"{ts}.log", log)):
+            p = ddir / fname
+            p.write_text(text)
+            p.chmod(0o600)
+        proposals.harvest(oc, ts)  # the real path: parse → validate → stage pending
     oc.close()
 
     from . import views

@@ -1,15 +1,18 @@
 # Launch checklist — target: top of GitHub trending (daily)
 
-> **STATUS 2026-07-18 (current):** repo is PUBLIC. **v0.8.0** released on GitHub, CI green,
-> topics set, THREE security/correctness audits clean, hero GIF live. Nothing posted anywhere yet.
-> Launch scheduled **Tue 2026-07-21, 8:00 AM CT** — resume at "Launch morning" below.
-> The product grew far past a dashboard since v0.3.0: live SEARCH, a reply DRAFTER,
-> leads/replies inbox, real per-venture P&L + simulator, agent DISPATCH (write-back loop)
-> now with LIVE RESULT FEEDBACK (running/done + log tail), a live AGENTS-RUNNING panel,
-> a reorganized one-ranked-stack console, and `opsroom demo` serving the full LIVE console.
-> Remaining pre-launch items: PyPI upload of **v0.8.0** (`pipx run twine upload dist/*`
-> from the repo, maintainer's token — PyPI currently serves 0.7.0), fresh-machine
-> install test, social-preview upload check.
+> **STATUS 2026-07-20 (current):** repo is PUBLIC. **v0.9.0 "the operator loop"** on main:
+> agents PROPOSE ledger writes (one-tap approve, never auto-applied), a FIFO dispatch
+> work QUEUE, the full /leads WORKSPACE, and console-native first-run SETUP (no TOML
+> cliff). All 21 gates green. Launch scheduled **Tue 2026-07-21, 8:00 AM CT** — resume
+> at "Launch morning" below.
+> Remaining pre-launch items: tag + GitHub release for **v0.9.0**, build + PyPI upload
+> of **v0.9.0** (`pipx run --spec build pyproject-build`, then
+> `pipx run twine upload dist/*` from the repo, maintainer's token — PyPI currently
+> serves 0.7.0), RE-RECORD demo.gif (the console now opens with the AGENT PROPOSES
+> strip — the loop IS the pitch), fresh-machine install test, social-preview check.
+> Live loop demo for the recording: set `[agent] command` to
+> `["python3", "tests/fake_agent.py"]` in the demo config, tap ▶ on any action,
+> watch the run land as proposals, tap ✓ and watch the goal bar move.
 
 Reality check on the number: #1 daily overall needs roughly 400-800 stars in 24h;
 #1 in Python needs roughly 150-300. That volume comes from HN front page + Reddit +

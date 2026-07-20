@@ -51,7 +51,18 @@ task to your local agent CLI with a full context brief.
 
 Measurement → action → back to the agents.
 
-**Tweet 6 (CTA):**
+**Tweet 6 (the loop):**
+
+New in 0.9: the loop runs both ways.
+
+When a dispatched agent finishes, opsroom parses its output into PROPOSED ledger
+writes — "record $380 collected", "schedule the follow-up", "run this next".
+
+Nothing auto-applies. Each proposal waits on the console for your one-tap approve.
+
+Agents propose. You approve. The ledger moves.
+
+**Tweet 7 (CTA):**
 
 pipx install opsroom-console
 opsroom demo   ← fully loaded fictional console in 10 seconds

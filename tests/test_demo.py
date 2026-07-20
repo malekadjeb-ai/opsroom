@@ -34,12 +34,21 @@ def main():
         port = httpd.server_address[1]
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         live = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5).read().decode()
-        httpd.shutdown()
-        for needle in ("DO NOW", "$8,250", "Dana Reyes", "LEADS worklist — 5 open",
-                       "TODAY'S PACE", "Summit Fabrication"):
+        for needle in ("DO NOW", "$8,250", "Dana Reyes", "LEADS worklist — 11 open",
+                       "TODAY'S PACE", "Summit Fabrication",
+                       # the operator loop, pre-loaded: a finished agent run's
+                       # output staged as pending one-tap proposals
+                       "AGENT PROPOSES", "record $380", "nothing applies without your tap"):
             assert needle in live, f"live demo missing: {needle}"
         assert live.count("<form") >= 10, "live demo must be read-WRITE, not words on a screen"
-    print("demo gate: static console + live served demo with a seeded ledger")
+        # the /leads workspace over the seeded ledger: filters see every status
+        work = urllib.request.urlopen(f"http://127.0.0.1:{port}/leads", timeout=5).read().decode()
+        httpd.shutdown()
+        for needle in ("LEADS — 13 shown of 13", "Micah Reyes", "Perry Nolan",
+                       "Sasha Whitfield"):
+            assert needle in work, f"leads workspace missing: {needle}"
+    print("demo gate: static console + live served demo with a seeded ledger, "
+          "pending proposals, and a populated /leads workspace")
     return 0
 
 
