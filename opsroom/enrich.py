@@ -41,7 +41,7 @@ def _active_minutes(ts_list) -> float:
     return round(max(total, 1.0), 1)
 
 
-AGENT_SOURCES = ("cli", "codex")  # sources whose events aggregate into sessions rows
+AGENT_SOURCES = ("cli", "codex", "gemini", "cursor", "aider", "opencode")  # sources whose events aggregate into sessions rows
 
 
 def build_sessions(con) -> int:
@@ -242,7 +242,8 @@ def detect_loops(con, git_result: dict, vault_result: dict) -> dict:
 
 # ---------------------------------------------------------------- agents
 
-AGENT_LABELS = {"cli": "claude", "codex": "codex"}
+AGENT_LABELS = {"cli": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor",
+                "aider": "aider", "opencode": "opencode"}
 
 
 def by_agent(con, days: int = 7) -> list:

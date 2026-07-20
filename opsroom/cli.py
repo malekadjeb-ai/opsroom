@@ -11,13 +11,16 @@ from . import config, db, enrich, views
 
 def cmd_sync(args):
     con = db.connect()
-    sources = args.source.split(",") if args.source else ["cli", "codex", "git", "fs", "notes", "chat"]
+    sources = args.source.split(",") if args.source else [
+        "cli", "codex", "gemini", "cursor", "aider", "opencode", "git", "fs", "notes", "chat"]
     t0 = time.time()
     results, degraded = {}, []
     git_result, notes_result = {}, {}
-    from .collectors import (cli as c_cli, codex as c_codex, git as c_git, fs as c_fs,
-                             notes as c_notes, chat as c_chat)
-    registry = {"cli": c_cli, "codex": c_codex, "git": c_git, "fs": c_fs,
+    from .collectors import (cli as c_cli, codex as c_codex, gemini as c_gemini,
+                             cursor as c_cursor, aider as c_aider, opencode as c_opencode,
+                             git as c_git, fs as c_fs, notes as c_notes, chat as c_chat)
+    registry = {"cli": c_cli, "codex": c_codex, "gemini": c_gemini, "cursor": c_cursor,
+                "aider": c_aider, "opencode": c_opencode, "git": c_git, "fs": c_fs,
                 "notes": c_notes, "chat": c_chat}
     for name in sources:
         mod = registry.get(name)
@@ -82,6 +85,14 @@ def cmd_purge(args):
             con.execute("DELETE FROM file_state WHERE path LIKE '%/.claude/%'")
         if args.source == "codex":
             con.execute("DELETE FROM file_state WHERE path LIKE '%/.codex/%'")
+        if args.source == "gemini":
+            con.execute("DELETE FROM file_state WHERE path LIKE '%/.gemini/%'")
+        if args.source == "aider":
+            con.execute("DELETE FROM file_state WHERE path LIKE '%/.aider.chat.history.md'")
+        if args.source == "opencode":
+            con.execute("DELETE FROM file_state WHERE path LIKE '%/opencode.db'")
+        if args.source == "cursor":
+            con.execute("DELETE FROM file_state WHERE path LIKE '%/Cursor/User/globalStorage/state.vscdb'")
         print(f"purged source={args.source}")
     if args.before:
         con.execute("DELETE FROM events WHERE ts < ?", (args.before,))
@@ -113,7 +124,8 @@ def main():
     ip = sub.add_parser("init", help="interactive setup: ventures, goal, notes, trackers")
     ip.add_argument("--yes", action="store_true", help="accept detected defaults, no prompts")
     sp = sub.add_parser("sync", help="ingest all sources (read-only on sources)")
-    sp.add_argument("--source", help="comma-separated subset: cli,codex,git,fs,notes,chat")
+    sp.add_argument("--source",
+                    help="comma-separated subset: cli,codex,gemini,cursor,aider,opencode,git,fs,notes,chat")
     sp.add_argument("--dry-run", action="store_true", help="parse + count, write nothing")
     st = sub.add_parser("sitrep", help="operator SITREP: goal clock, cash, leads, pipeline, leak, one move")
     st.add_argument("--write", action="store_true", help="append to the daily note (default: print only)")

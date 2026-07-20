@@ -113,11 +113,11 @@ Built during a 23-day cash sprint by an operator running eight ventures, out of 
 
 **Do I need Claude Code / Codex / Obsidian?** No. Every source is optional and degrades gracefully. Git repos alone give you drift + loops + sessions; add notes when you want the money features.
 
-**Which AI agents are supported?** Claude Code and OpenAI Codex CLI are read live from their local logs. ChatGPT and Claude web/desktop ingest via each vendor's data-export file dropped in a folder. Gemini CLI and Cursor are next — collectors are ~100-line files with one `collect(con)` entry point, PRs welcome.
+**Which AI agents are supported?** Claude Code, OpenAI Codex CLI, Gemini CLI, Cursor, Aider, and OpenCode are read live from their local logs. ChatGPT and Claude web/desktop ingest via each vendor's data-export file dropped in a folder. Collectors are ~100-line files with one `collect(con)` entry point, PRs welcome for anything else.
 
 **macOS says the notes are unreadable.** Grant your terminal Full Disk Access. If access drops mid-session, opsroom serves the last cached snapshot and says so.
 
-**Windows?** WSL works. Native Windows is untested.
+**Windows?** WSL works. Native Windows path/permission handling has been hardened (sync-root detection, project-path derivation, and 600/700 perm enforcement all previously assumed `/`-separated POSIX paths and hard-failed on chmod), but it still hasn't been run end-to-end on a real Windows box — CI only covers ubuntu + macos. If you can, run the test gates and `opsroom demo` on native Windows and open an issue with what breaks.
 
 ## Development
 
