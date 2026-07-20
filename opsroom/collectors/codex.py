@@ -17,7 +17,7 @@ def _project_of(cwd: str) -> str:
     if not cwd:
         return "?"
     home = str(Path.home())
-    rel = cwd[len(home):].strip("/") if cwd.startswith(home) else cwd
+    rel = cwd[len(home):].strip("/\\") if cwd.startswith(home) else cwd
     return rel or "~"
 
 

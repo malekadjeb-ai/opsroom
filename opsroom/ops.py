@@ -63,7 +63,7 @@ def connect() -> sqlite3.Connection:
     _db._assert_safe_location()  # never let the cash/leads ledger live in a sync root
     p = db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(p.parent, stat.S_IRWXU)  # 700
+    _db._chmod(p.parent, stat.S_IRWXU)  # 700
     if not p.exists():
         os.close(os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))  # create at 600
     con = sqlite3.connect(p)
@@ -76,7 +76,7 @@ def connect() -> sqlite3.Connection:
     for suffix in ("", "-wal", "-shm"):
         f = Path(str(p) + suffix)
         if f.exists():
-            os.chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600, same posture as activity.db
+            _db._chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600, same posture as activity.db
     return con
 
 

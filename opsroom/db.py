@@ -91,25 +91,37 @@ END;
 
 
 def _assert_safe_location() -> None:
-    p = str(DB_PATH.resolve())
+    # Normalize to forward slashes: on native Windows Path.resolve() yields backslashes,
+    # which would silently defeat the "/Documents/"-style markers below.
+    p = str(DB_PATH.resolve()).replace("\\", "/")
     for marker in SYNC_ROOT_MARKERS:
         if marker in p:
             sys.exit(f"FATAL: DB path {p} appears to be inside a sync root ({marker}). Refusing.")
 
 
+def _chmod(path: Path, mode: int) -> None:
+    """Best-effort owner-only perms. On Windows, os.chmod only toggles the read-only
+    attribute (no POSIX owner/group bits, no real ACL isolation) and can raise on some
+    setups (e.g. the file open elsewhere) — never let that take the console down."""
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def enforce_perms() -> None:
     if DB_DIR.exists():
-        os.chmod(DB_DIR, stat.S_IRWXU)  # 700
+        _chmod(DB_DIR, stat.S_IRWXU)  # 700
     for suffix in ("", "-wal", "-shm"):
         f = Path(str(DB_PATH) + suffix)
         if f.exists():
-            os.chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600
+            _chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600
 
 
 def connect() -> sqlite3.Connection:
     _assert_safe_location()
     DB_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(DB_DIR, stat.S_IRWXU)
+    _chmod(DB_DIR, stat.S_IRWXU)
     con = sqlite3.connect(DB_PATH)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
