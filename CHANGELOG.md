@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.1 — 2026-07-21
+
+Two production fixes found by the advisor's own first night:
+
+- **Agent CLI resolution** — the always-on console (launchd/systemd) runs with a
+  minimal PATH, so `claude` was unfindable and every dispatch it fired died into
+  a 0-byte log. argv[0] now resolves like a login shell (PATH + ~/.local/bin,
+  /opt/homebrew/bin, /usr/local/bin); an unresolvable command fails loudly into
+  the log with a hint instead of raising.
+- **Self-healing counsel harvest** — a finished advise run whose registration was
+  lost is recovered by the sweep from its own brief (opsroom-written, never agent
+  output — registered-runs-only holds); advisor errors land in kv `advise_error`
+  instead of vanishing.
+
 ## 0.10.0 — 2026-07-20 · "the advisor"
 
 The console stops waiting for you and starts thinking.
