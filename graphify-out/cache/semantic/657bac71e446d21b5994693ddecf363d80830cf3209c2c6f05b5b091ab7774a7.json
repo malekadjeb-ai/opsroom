@@ -1,0 +1,1 @@
+{"nodes": [{"id": "opsroom_cli_module", "label": "opsroom/cli.py (CLI entrypoint dispatching demo/sitrep/week subcommands)", "file_type": "code", "source_file": "opsroom/cli.py", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

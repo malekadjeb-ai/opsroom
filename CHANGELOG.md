@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.2 — 2026-07-21
+
+- **Auto-reload actually reloads** — the CSP (`default-src 'none'`) was blocking
+  the page's own `/version` poll, so no open console page had ever refreshed
+  itself after a write; `connect-src 'self'` unblocks it (still zero external
+  origins). A gate now pins the directive.
+
 ## 0.10.1 — 2026-07-21
 
 Two production fixes found by the advisor's own first night:

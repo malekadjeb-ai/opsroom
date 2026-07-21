@@ -33,7 +33,7 @@ _REV = [1]
 _LOCK = threading.Lock()
 
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
-       "form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+       "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 
 
 def _bump():

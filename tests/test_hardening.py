@@ -73,6 +73,10 @@ def main():
         assert "frame-ancestors 'none'" in csp, f"CSP missing frame-ancestors: {csp}"
         assert r.headers.get("X-Frame-Options") == "DENY", "X-Frame-Options missing"
 
+        # ---- the auto-reload poller must be able to fetch /version: without
+        # connect-src 'self', default-src 'none' blocks it and pages never refresh
+        assert "connect-src 'self'" in csp, f"CSP missing connect-src 'self': {csp}"
+
         # ---- /context is scrubbed like the dispatch brief
         # fake secret assembled from parts so the repo never contains a
         # secret-shaped literal (GitHub push protection pattern-matches these)

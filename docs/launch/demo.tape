@@ -10,7 +10,7 @@ Set TypingSpeed 40ms
 Set Shell "bash"
 
 Hide
-Type `export PATH="$PWD/.venv/bin:$PATH" OPSROOM_NO_OPEN=1`
+Type `export PATH="$PWD/.venv/bin:$PATH" OPSROOM_NO_OPEN=1 OPSROOM_NO_SERVE=1`
 Enter
 Type `export OPSROOM_CONFIG_DIR=~/.local/share/opsroom/demo/config OPSROOM_DATA_DIR=~/.local/share/opsroom/demo/data`
 Enter
