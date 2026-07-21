@@ -511,6 +511,12 @@ def _sync_loop():
                 try:
                     if counsel.advise_tick(oc, on_exit=_bump):
                         _bump()
+                except Exception as e:
+                    # a silent advisor is a broken promise — leave a breadcrumb
+                    try:
+                        ops.kv_set(oc, "advise_error", f"{type(e).__name__}: {e}"[:300])
+                    except Exception:
+                        pass
                 finally:
                     oc.close()
             except Exception:

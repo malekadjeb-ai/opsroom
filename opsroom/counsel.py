@@ -185,21 +185,48 @@ def harvest(ocon, ts: str) -> bool:
     return True
 
 
+def _is_advise_brief(ts: str) -> bool:
+    """True when a run's BRIEF (written by opsroom itself, 600-perm, never agent
+    output) is an advisor brief. Lets the sweep self-heal a run whose register
+    call was lost — without weakening registered-runs-only, because the decision
+    is grounded in our own file, not the log."""
+    if not TS_RE.match(ts or ""):
+        return False
+    bf = config.data_dir() / "dispatch" / f"{ts}-brief.md"
+    try:
+        head = bf.read_text()[:400]
+    except OSError:
+        return False
+    return f"TASK: {ADVISE_TASK}" in head
+
+
 def harvest_finished(ocon) -> int:
     """Sweep recent open counsel rows whose runs finished while the console was
-    down. Targeted at the counsel table itself — cheap when there's nothing."""
+    down — and self-heal finished advise runs that were never registered (their
+    briefs identify them; see _is_advise_brief)."""
     from . import dispatch  # lazy: dispatch imports counsel at brief-build time
     _ensure(ocon)
     done = 0
+    seen = set()
     rows = ocon.execute(
         "SELECT dispatch_ts FROM counsel WHERE status='open' "
         "ORDER BY created DESC LIMIT 8").fetchall()
     for r in rows:
         ts = r["dispatch_ts"]
+        seen.add(ts)
         if ops.kv_get(ocon, f"counsel_harvested::{ts}", ""):
             continue
         st = dispatch.status(ts)
         if st == "done" or st.startswith("exit"):
+            if harvest(ocon, ts):
+                done += 1
+    for h in dispatch.recent(limit=8):
+        ts = h["tsid"]
+        if ts in seen or ops.kv_get(ocon, f"counsel_harvested::{ts}", ""):
+            continue
+        st = h.get("status") or ""
+        if (st == "done" or st.startswith("exit")) and _is_advise_brief(ts):
+            register(ocon, ts, "advise", "")
             if harvest(ocon, ts):
                 done += 1
     return done
@@ -285,7 +312,15 @@ def advise_tick(ocon, on_exit=None) -> str:
     # CLAIM FIRST: a crash between here and launch skips one window, never loops
     ops.kv_set(ocon, "advise_last", now.isoformat())
     r = dispatch.dispatch(ADVISE_TASK, kind="advise", on_exit=on_exit)
-    register(ocon, r["ts"], "advise", "")
+    try:
+        register(ocon, r["ts"], "advise", "")
+    except Exception as e:
+        # the run is live either way; the harvest sweep self-heals it from the
+        # brief. Leave a visible breadcrumb instead of a silent swallow.
+        try:
+            ops.kv_set(ocon, "advise_error", f"{type(e).__name__}: {e}"[:300])
+        except Exception:
+            pass
     return r["ts"]
 
 

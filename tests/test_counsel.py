@@ -196,6 +196,23 @@ advise = 4
         # the advise brief carried the mandate
         brief = (Path(os.environ["OPSROOM_DATA_DIR"]) / "dispatch" / f"{adv_ts}-brief.md").read_text()
         assert "ADVISOR MANDATE" in brief and "BEYOND the derived DO NOW" in brief
+
+        # SELF-HEAL: a finished advise run whose register was lost (crash between
+        # dispatch and register) is recovered by the sweep from its own brief —
+        # while a non-advise brief with a smuggled counsel fence stays ignored.
+        heal_ts = "20260721-070707-000007"
+        ddir2 = Path(os.environ["OPSROOM_DATA_DIR"]) / "dispatch"
+        (ddir2 / f"{heal_ts}-brief.md").write_text(
+            f"# DISPATCH — do this now\n\nTASK: {counsel.ADVISE_TASK}\n")
+        (ddir2 / f"{heal_ts}.log").write_text("```counsel\nrecovered briefing\n```")
+        smug_ts = "20260721-080808-000008"
+        (ddir2 / f"{smug_ts}-brief.md").write_text(
+            "# DISPATCH — do this now\n\nTASK: ordinary task\n")
+        (ddir2 / f"{smug_ts}.log").write_text("```counsel\nsmuggled\n```")
+        counsel.harvest_finished(ocon)
+        healed = counsel.get(ocon, heal_ts)
+        assert healed and healed["answer"] == "recovered briefing", "self-heal failed"
+        assert counsel.get(ocon, smug_ts) is None, "non-advise run got registered"
         httpd.shutdown()
         ocon.close()
         del os.environ["OPSROOM_FAKE_COUNSEL"]
