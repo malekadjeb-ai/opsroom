@@ -129,6 +129,28 @@ command = ["{sys.executable}", "{slow}"]
         assert fake_key not in dispatch.tail(r["ts"]), \
             "agent log tail leaked a secret — scrub failed"
 
+        # a missing agent binary fails LOUDLY into the log, never a 0-byte mystery
+        (cfg_dir / "config.toml").write_text(CONFIG_OFF + '''
+[agent]
+enabled = true
+command = ["definitely-not-a-real-binary-540d1"]
+''')
+        config.load(force=True)
+        time.sleep(1.1)
+        r = dispatch.dispatch("Doomed run", "meridian")
+        assert r.get("error"), "missing binary did not surface an error"
+        assert "could not launch" in Path(r["log"]).read_text() if r["log"] else True
+        assert "could not launch" in dispatch.tail(r["ts"]), "log tail silent on failure"
+        # absolute paths pass through _resolve_exe untouched
+        assert dispatch._resolve_exe(sys.executable) == sys.executable
+        assert dispatch._resolve_exe("sh").endswith("/sh"), "PATH resolution broken"
+        (cfg_dir / "config.toml").write_text(CONFIG_OFF + f'''
+[agent]
+enabled = true
+command = ["{sys.executable}", "{slow}"]
+''')
+        config.load(force=True)
+
         # served: /do renders the brief; POST dispatch is CSRF-gated
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
         port = httpd.server_address[1]

@@ -16,6 +16,7 @@ Security posture (this can execute a local program, so it's opt-in and rigid):
 """
 import os
 import re
+import shutil
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -94,6 +95,28 @@ def agent_ready() -> bool:
     return bool(config.load().get("agent", {}).get("enabled"))
 
 
+_EXTRA_BINS = (Path.home() / ".local" / "bin", Path("/opt/homebrew/bin"),
+               Path("/usr/local/bin"))
+
+
+def _resolve_exe(name: str) -> str:
+    """Resolve the agent CLI the way a login shell would. launchd/systemd start
+    the always-on console with a bare PATH (/usr/bin:/bin:...), which silently
+    broke every dispatch: Popen(['claude', ...]) raised FileNotFoundError into a
+    0-byte log. Absolute paths pass through; then PATH; then the usual user bins."""
+    p = Path(name).expanduser()
+    if p.is_absolute():
+        return str(p)
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in _EXTRA_BINS:
+        cand = d / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return name  # let the launch fail loudly into the log below
+
+
 def _open_600(path: Path):
     """Create owner-only from the start — no umask window where the brief/log is
     world-readable before a follow-up chmod."""
@@ -117,11 +140,20 @@ def dispatch(task: str, venture: str = "", on_exit=None, lead_id: int = None,
     if not agent.get("enabled"):
         return out
     cmd = [str(c) for c in (agent.get("command") or ["claude", "-p"])] + [brief]
+    cmd[0] = _resolve_exe(cmd[0])
     log = ddir / f"{ts}.log"
     with _open_600(log) as fh:
-        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True,
-                                cwd=str(Path.home()))
+        try:
+            proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, start_new_session=True,
+                                    cwd=str(Path.home()))
+        except OSError as e:
+            # never a silent 0-byte log: the /do tail must explain what happened
+            fh.write(f"opsroom: could not launch agent command {cmd[0]!r}: {e}\n"
+                     f"hint: the always-on console (launchd/systemd) runs with a "
+                     f"minimal PATH — use an absolute path in [agent] command.\n")
+            out["error"] = str(e)
+            return out
     _PROCS[ts] = proc
     with _open_600(ddir / f"{ts}.pid") as fh:  # survives a console restart
         fh.write(str(proc.pid))
