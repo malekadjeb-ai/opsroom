@@ -12,3 +12,4 @@ daily/
 .venv/
 .impeccable/
 .claude/
+graphify-out/

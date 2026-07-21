@@ -1,1 +1,0 @@
-{"nodes": [{"id": "pkg_opsroom_console", "label": "opsroom-console", "file_type": "code", "type": "package", "ecosystem": "python", "source_file": "pyproject.toml", "source_location": "L1", "version": "0.8.0"}], "edges": []}
