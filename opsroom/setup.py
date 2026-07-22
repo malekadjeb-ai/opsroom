@@ -144,6 +144,77 @@ def run(yes=False):
         notes_roots=(f'["{notes}"]' if notes else "[]"),
         dashboard_note=dash_note, pipeline_dir=pipedir, ventures=vblocks or "# [[venture]] …")
     print(f"\nwrote {cfg_path}")
-    print("next: opsroom sync   (first ingest)")
-    print("then: opsroom dash   (your console)")
+    # a commented [agent] stub so the AI hookup is discoverable — terminal init
+    # ONLY. The web setup's template has no [agent] slot, and that wall stands.
+    with open(cfg_path, "a") as f:
+        f.write(AGENT_STUB)
+    print("next: opsroom sync      (first ingest)")
+    print("then: opsroom dash      (your console)")
+    print("AI:   opsroom connect   (wire your agent CLI — one confirm)")
+    return 0
+
+
+AGENT_STUB = """
+# ---- one-tap agent dispatch (terminal-only opt-in; run `opsroom connect`)
+# [agent]
+# enabled = true
+# command = ["claude", "-p"]   # any agent CLI: the brief is appended as ONE argument
+# advise = "daily"             # autonomous briefings: "off" | "daily" | hours (2..168)
+"""
+
+_AGENT_CANDIDATES = (("Claude Code", ["claude", "-p"]),
+                     ("Codex", ["codex", "exec"]),
+                     ("Gemini CLI", ["gemini", "-p"]))
+
+
+def connect(yes=False) -> int:
+    """`opsroom connect` — wire your agent CLI into [agent] with explicit consent.
+    Terminal-only on purpose: the browser-facing setup can never grant the console
+    the power to launch a CLI. Appends [agent]; refuses if one already exists."""
+    from . import dispatch
+    cfg_path = config.config_dir() / "config.toml"
+    if not cfg_path.is_file():
+        print("no config yet — run `opsroom init` first")
+        return 1
+    if "[agent]" in cfg_path.read_text():
+        print(f"an [agent] section already exists in {cfg_path} — edit it by hand.")
+        print("(connect never rewrites an existing [agent]: your command is yours.)")
+        return 1
+    found = []
+    for label, cmd in _AGENT_CANDIDATES:
+        resolved = dispatch._resolve_exe(cmd[0])
+        if Path(resolved).is_absolute():
+            found.append((label, cmd, resolved))
+    if not found:
+        print("no agent CLI found on PATH (looked for: "
+              + ", ".join(c[1][0] for c in _AGENT_CANDIDATES) + ")")
+        print("install one, or add [agent] to config.toml yourself with an absolute path.")
+        return 1
+    label, cmd, resolved = found[0]
+    print(f"found {label}: {resolved}")
+    if len(found) > 1:
+        print("also found: " + ", ".join(f"{l} ({r})" for l, _, r in found[1:])
+              + " — edit config.toml to switch.")
+    if not yes and _ask(f"enable one-tap dispatch via {label}? (y/N)", "n").lower() != "y":
+        print("nothing written.")
+        return 0
+    advise = False
+    if yes or _ask("also let it think for you — an autonomous daily briefing? (y/N)",
+                   "n").lower() == "y":
+        advise = True
+    cmd_toml = ", ".join(f'"{_tq(c)}"' for c in cmd)
+    block = ("\n[agent]\nenabled = true\n"
+             f"command = [{cmd_toml}]\n"
+             f'advise = "{"daily" if advise else "off"}"\n')
+    with open(cfg_path, "a") as f:
+        f.write(block)
+    cfg_path.chmod(0o600)
+    config.load(force=True)
+    print(f"wrote [agent] to {cfg_path} (600)")
+    print("every dispatch stays gated: agents PROPOSE, you approve — nothing "
+          "applies without your tap.")
+    if advise:
+        print("the advisor will produce its first briefing on the next console tick "
+              "after 06:00 local (never while other work runs).")
+    print("check the wiring any time: opsroom doctor")
     return 0

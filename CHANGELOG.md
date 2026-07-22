@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.0 — 2026-07-21 · "the operator's cockpit"
+
+The clarity release: know exactly what to do in ten seconds.
+
+- **PIPELINE** — leads stop being a blob. New stage axis (new/contacted/talking/
+  quoted/won/lost) + source/intent/first_seen/link/next_due columns, all
+  additive with a one-time backfill that derives stages only from data already
+  in the rows; the legacy status column stays mirrored so nothing breaks.
+  `/leads` becomes a stage-segmented board with live counts, temperature-
+  colored ages, inline stage moves, and human titles — never "LSA · lead".
+  The importer keeps provenance structured instead of flattening it into the
+  note; a replied lead arrives in *talking* with the call due today.
+- **lead_stage** — new whitelisted proposal verb: agents can propose pipeline
+  moves; you approve with one tap, like every other write.
+- **The NOW fold** — exactly one alert banner (rest fold behind "+N more",
+  including the previously invisible advisor-error breadcrumb), one pace line
+  that includes today's tape, the briefing collapsed to its verdict + 3 plays,
+  DO NOW capped at 7 rows with routine sends/calls collapsed to one row each,
+  and coding-session promises moved to a PROMISES drawer — only money work
+  ranks.
+- **Real navigation** — NOW · LEADS · MONEY · ADVISOR · VENTURES on every
+  page; /leads and /counsel stop hiding behind buried links; one shared
+  stylesheet + page shell across all workspace pages.
+- **`opsroom connect`** — detects your agent CLI (claude/codex/gemini), shows
+  what it resolved, writes `[agent]` only on your explicit yes (second yes =
+  daily autonomous briefing). Terminal-only by design; the web wall stands.
+- **`opsroom doctor`** — read-only wiring check: config, DB perms, agent
+  command resolution (launchd bare-PATH aware), advise mode, and the last
+  advisor error, verbatim. Exit 1 on any real failure.
+
 ## 0.10.2 — 2026-07-21
 
 - **Auto-reload actually reloads** — the CSP (`default-src 'none'`) was blocking

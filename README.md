@@ -19,9 +19,21 @@ No cloud. No accounts. No dependencies. One Python package, one SQLite file on y
 pipx install opsroom-console   # or: pip install opsroom-console / uv tool install opsroom-console
 opsroom demo             # a fully loaded LIVE console in 10 seconds (fictional data)
 opsroom serve            # your console: live, writable, auto-refreshing
+opsroom connect          # wire your agent CLI (claude/codex/gemini) — one confirm
 ```
 
 A fresh install's console opens with an on-page **SET UP YOUR ROOM** card — name the goal and your ventures right there and start operating; no config files. (`opsroom init` is the terminal equivalent, and config.toml stays yours to refine.)
+
+**Wiring in your AI** is one terminal command — `opsroom connect` finds your agent CLI, shows you exactly what it resolved, and writes the `[agent]` block only on your explicit yes (a second yes turns on the autonomous daily briefing). Deliberately terminal-only: the browser-facing console can never grant itself the power to launch a CLI. The equivalent by hand:
+
+```toml
+[agent]
+enabled = true
+command = ["claude", "-p"]   # any agent CLI — the brief is appended as ONE argument
+advise  = "daily"            # autonomous briefings: "off" | "daily" | hours (2..168)
+```
+
+Something quiet? `opsroom doctor` checks the config, DB permissions, whether your agent command actually resolves (including under launchd's bare PATH), and prints the advisor's last error breadcrumb — read-only, exit 1 on any real failure.
 
 ## What you get
 
@@ -47,7 +59,7 @@ A fresh install's console opens with an on-page **SET UP YOUR ROOM** card — na
 
 **⏳ WORK QUEUE — dispatches chain.** Fire a second dispatch while an agent is running and it queues, auto-firing FIFO when the runner finishes. An agent can even propose its own next run; your tap chains it. Queued work shows as chips in AGENTS RUNNING with one-tap dismiss.
 
-**📇 LEADS WORKSPACE — the whole register, workable.** `/leads` is a full page over every lead you've ever captured: search, status chips (open/quoted/won/lost), age and quote-size sorts, and every action inline — call, quote, collect, lost, draft. Each lead's ▶ dispatches an agent with that lead's id, contact, quote and touch history baked into the brief.
+**📇 PIPELINE — every lead in a real stage, not a blob.** `/leads` is a stage-segmented board over every lead you've ever captured: **new → contacted → talking → quoted → won/lost**, with live counts, source pills (LSA/website/referral), age rendered as temperature, and a due-date that floats overdue work to the top. Every action is inline — call, quote, collect, move stage, draft — and lands you back on the board. Imports keep their provenance (source, first-seen date, reply flag) as structured fields, so a lead that replied arrives already in *talking* with the call due today. Agents can propose stage moves too (`lead_stage` — whitelisted, one-tap gated like everything else), and each lead's ▶ dispatches an agent with that lead's id, contact, quote and touch history baked into the brief.
 
 **🔥 REPLIED + LEADS — the hot list, fed by anything.** Drop a small JSON file (from an AI agent session reading your mail, a CRM export, a webhook you pipe to disk) and opsroom merges it: new leads dedup by phone into the register, and a reply from someone you pitched hits the top of NOW as a call-these-first block with a one-tap drafted answer. Replies schedule the call for **today**, not the day-3 cadence — a live reply is the hottest thing on the board. The drop file is the boundary: opsroom itself never touches the network.
 

@@ -160,6 +160,11 @@ def main():
     pp.add_argument("--source")
     pp.add_argument("--before", metavar="ISO_DATE")
     sub.add_parser("status", help="config + watermarks + row counts per source")
+    cp = sub.add_parser("connect", help="wire your agent CLI into [agent] — detects "
+                        "claude/codex/gemini, one explicit confirm, terminal-only")
+    cp.add_argument("--yes", action="store_true", help="skip confirms (CI/scripts)")
+    sub.add_parser("doctor", help="why is it quiet? config, DB perms, agent "
+                   "resolution, advisor errors — read-only checks")
     args = p.parse_args()
 
     if args.cmd is None:  # bare `opsroom` = the live console
@@ -168,6 +173,12 @@ def main():
     if args.cmd == "init":
         from . import setup
         return setup.run(yes=args.yes)
+    if args.cmd == "connect":
+        from . import setup
+        return setup.connect(yes=args.yes)
+    if args.cmd == "doctor":
+        from . import doctor
+        return doctor.run()
     if args.cmd == "demo":
         from . import demo
         return demo.run()
