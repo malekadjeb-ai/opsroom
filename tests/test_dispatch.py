@@ -69,7 +69,8 @@ def main():
         runner.write_text(
             "import json,sys\n"
             f"json.dump({{'argc': len(sys.argv), 'head': sys.argv[1][:60]}}, "
-            f"open({str(marker)!r}, 'w'))\n")
+            f"open({str(marker)!r}, 'w'))\n"
+            "print('done')\n")  # a 0-byte log now honestly reads as a dead run
         (cfg_dir / "config.toml").write_text(CONFIG_OFF + f'''
 [agent]
 enabled = true

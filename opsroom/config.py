@@ -54,6 +54,8 @@ DEFAULTS = {
         # SEPARATE opt-in beyond enabled: "off" | "daily" (one briefing after 6am
         # local) | int hours between briefings (2..168)
         "advise": "off",
+        "timeout_minutes": 30,        # watchdog: kill + record runs past this (0 = off)
+        "input": "argv",              # "argv" (brief as ONE arg) | "stdin" (piped brief)
     },
     "ventures": [],                  # list of tables: key,label,revenue,track,trap,
                                      #   path_needles,keywords,files,target_table,playbook

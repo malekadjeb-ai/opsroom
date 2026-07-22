@@ -6,14 +6,27 @@
     enabled = true
     command = ["python3", "tests/fake_agent.py"]
 
-It receives the dispatch brief as argv[1] like a real agent, pretends to work,
-then prints proposal blocks. Venture key comes from OPSROOM_FAKE_VENTURE
-(default "meridian" — the demo venture). Fictional data only."""
+It receives the dispatch brief as argv[1] like a real agent (or on stdin under
+OPSROOM_FAKE_STDIN=1), pretends to work, then prints proposal blocks. Venture
+key comes from OPSROOM_FAKE_VENTURE (default "meridian" — the demo venture).
+Failure modes for the runs-ledger gates: OPSROOM_FAKE_SLEEP=<sec> (hang, for
+the watchdog), OPSROOM_FAKE_SILENT=1 (die with zero output, for the dead-run
+retry), OPSROOM_FAKE_EXIT=<n> (nonzero exit after output). Fictional data only."""
 import os
 import sys
+import time
 
 venture = os.environ.get("OPSROOM_FAKE_VENTURE", "meridian")
-brief = sys.argv[1] if len(sys.argv) > 1 else ""
+if os.environ.get("OPSROOM_FAKE_STDIN"):
+    brief = sys.stdin.read()
+else:
+    brief = sys.argv[1] if len(sys.argv) > 1 else ""
+
+if os.environ.get("OPSROOM_FAKE_SLEEP"):
+    time.sleep(float(os.environ["OPSROOM_FAKE_SLEEP"]))
+
+if os.environ.get("OPSROOM_FAKE_SILENT"):
+    sys.exit(1)  # the silent-night signature: 0 bytes of output, gone
 print(f"read the brief ({len(brief)} chars). Working the task…")
 print("called the two newest leads, drafted the follow-up, confirmed one payment.")
 print("Proposing results:")
@@ -46,3 +59,6 @@ Also found in a note: {fake_secret}
   {{"task": "Draft the Saturday-slot text blast", "venture": "not-a-venture", "why": "tests venture coercion"}}
 ]}}
 ```''')
+
+if os.environ.get("OPSROOM_FAKE_EXIT"):
+    sys.exit(int(os.environ["OPSROOM_FAKE_EXIT"]))
