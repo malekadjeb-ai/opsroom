@@ -41,8 +41,10 @@ leads to call — each row DOable in place:
   instead of colliding.
 - A live **AGENTS RUNNING** panel that reads which Claude Code sessions are alive
   right now (interactive, cowork, background), attributed per venture.
-- A full **leads workspace** — every lead ever captured, searchable, sortable by
-  age or quote size, each one dispatchable with its history baked into the brief.
+- A full **PIPELINE board** — every lead ever captured in a real stage (new →
+  contacted → talking → quoted → won/lost) with live counts, source pills, and
+  age as temperature; each one dispatchable with its history baked into the
+  brief, and agents can propose stage moves you approve with one tap.
 
 The newest piece closes the loop in the other direction: **agents propose, you
 approve, the ledger moves**. When a dispatched agent finishes, opsroom parses its

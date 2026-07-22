@@ -1131,6 +1131,7 @@ def _counsel_card(sx) -> str:
     for line in (row["answer"] or "").splitlines():
         line = line.strip()
         if line and not line.startswith(("#", "-", "*", "`", ">")):
+            line = line.replace("**", "").replace("__", "")  # plain text, not raw markdown
             verdict = line[:220] + ("…" if len(line) > 220 else "")
             break
     plays = "".join(
