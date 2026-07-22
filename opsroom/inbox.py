@@ -12,8 +12,13 @@ Drop shapes (extra keys are ignored):
 
   leads.json    {"leads": [{"name": "Kestrel Detailing", "phone": "(555) 010-0199",
                             "service": "full detail", "note": "asked about pricing",
-                            "date": "2026-07-16", "link": "https://…"}],
+                            "date": "2026-07-16", "link": "https://…",
+                            "source": "lsa", "replied": false}],
                  "missed_calls": 2}
+                `source` ∈ lsa/website/referral/manual/import (else "import");
+                `date` → first_seen, `link` → link column, `replied: true` lands
+                the lead in stage "talking" with a call due TODAY — provenance is
+                stored structured, never flattened into the note.
   replies.json  {"replies": [{"msg_id": "abc123", "date": "2026-07-16",
                               "venture": "meridian", "target": "Kestrel Detailing",
                               "from_name": "Sam", "from_email": "sam@kestrel.example",
@@ -91,16 +96,23 @@ def merge_leads(ocon, parsed: dict) -> dict:
         if _digits(phone) in have:
             skipped += 1
             continue
-        note_bits = [ld.get("note") or ""]
-        if ld.get("date"):
-            note_bits.append(f"lead date {str(ld['date'])[:10]}")
-        if ld.get("link"):
-            note_bits.append(f"reply: {str(ld['link'])[:200]}")
+        service = (ld.get("service") or "").strip()[:80]
+        # A synthesized name reads like a person would say it — never "LSA · lead".
         name = (ld.get("name") or "").strip()[:80] or \
-            f"{(ld.get('service') or 'imported').strip()[:40]} lead"
-        ops.add_lead(ocon, name, phone, (ld.get("service") or "")[:80],
-                     " · ".join(b for b in note_bits if b)[:300],
-                     venture=(ld.get("venture") or "")[:40])
+            f"{(service or 'Lead').title()[:40]} · {phone}"
+        source = str(ld.get("source") or "").strip().lower()
+        if source not in ops.SOURCES:
+            source = "import"
+        replied = bool(ld.get("replied"))
+        ops.add_lead(ocon, name, phone, service,
+                     (ld.get("note") or "")[:300],
+                     venture=(ld.get("venture") or "")[:40],
+                     stage="talking" if replied else "new",
+                     source=source,
+                     intent=service,
+                     first_seen=str(ld.get("date") or "")[:10],
+                     link=str(ld.get("link") or "")[:200],
+                     next_due=ops._today().isoformat() if replied else "")
         have.add(_digits(phone))
         added += 1
     try:

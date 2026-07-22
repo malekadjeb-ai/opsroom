@@ -20,6 +20,14 @@ from . import config, redact
 
 FOLLOWUP_DAYS = 3  # default cadence: every touch schedules a day-3 follow-up
 
+# The pipeline vocabulary. `stage` is the operator-facing axis; `status` stays as
+# the legacy 4-value column, always mirrored via _STAGE_TO_STATUS so every
+# pre-0.11 query and verb keeps working against the same rows.
+STAGES = ("new", "contacted", "talking", "quoted", "won", "lost")
+SOURCES = ("lsa", "website", "referral", "manual", "import")
+_STAGE_TO_STATUS = {"new": "open", "contacted": "working", "talking": "working",
+                    "quoted": "working", "won": "won", "lost": "lost"}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS touches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,14 +78,55 @@ def connect() -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=15000")  # wait out a concurrent writer, don't 500
     con.executescript(SCHEMA)
-    if "venture" not in {r[1] for r in con.execute("PRAGMA table_info(leads)")}:
-        con.execute("ALTER TABLE leads ADD COLUMN venture TEXT")  # migrate pre-0.6.1 ledgers
+    _migrate_leads(con)
     con.row_factory = sqlite3.Row
     for suffix in ("", "-wal", "-shm"):
         f = Path(str(p) + suffix)
         if f.exists():
             _db._chmod(f, stat.S_IRUSR | stat.S_IWUSR)  # 600, same posture as activity.db
     return con
+
+
+def _migrate_leads(con) -> None:
+    """Additive lead migrations. Every column is a nullable TEXT ALTER guarded by
+    PRAGMA table_info, so any pre-0.11 (or pre-0.6.1) ledger opens cleanly. The
+    stage backfill runs once, kv-guarded, and only derives from data already in
+    the row — it never invents facts."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(leads)")}
+    for col in ("venture", "stage", "source", "intent", "next_due", "first_seen", "link"):
+        if col not in cols:
+            con.execute(f"ALTER TABLE leads ADD COLUMN {col} TEXT")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage, next_due, added)")
+    done = con.execute("SELECT v FROM kv WHERE k='leads_v11_backfill'").fetchone()
+    if done and done[0]:
+        return
+    con.execute("""UPDATE leads SET stage = CASE
+        WHEN status='won'  THEN 'won'
+        WHEN status='lost' THEN 'lost'
+        WHEN quoted IS NOT NULL THEN 'quoted'
+        WHEN note LIKE '%reply%' OR EXISTS (
+             SELECT 1 FROM touches t
+             WHERE lower(t.target)=lower(leads.name) AND t.kind='replied')
+             THEN 'talking'
+        WHEN last_touch IS NOT NULL OR status='working' THEN 'contacted'
+        ELSE 'new' END
+        WHERE stage IS NULL OR stage=''""")
+    con.execute("""UPDATE leads SET source = CASE
+        WHEN note LIKE '%lead date %' OR name LIKE 'LSA%' THEN 'import'
+        ELSE 'manual' END
+        WHERE source IS NULL OR source=''""")
+    con.execute("""UPDATE leads SET intent = service
+        WHERE (intent IS NULL OR intent='') AND service IS NOT NULL AND service != ''""")
+    # first_seen: best-effort pull of the 10-char date after 'lead date ' in the
+    # flattened note (pre-0.11 importer), else the row's own added date.
+    con.execute("""UPDATE leads SET first_seen = CASE
+        WHEN instr(note, 'lead date ') > 0
+             THEN substr(note, instr(note, 'lead date ') + 10, 10)
+        ELSE substr(added, 1, 10) END
+        WHERE first_seen IS NULL OR first_seen=''""")
+    con.execute("INSERT INTO kv (k, v) VALUES ('leads_v11_backfill', '1') "
+                "ON CONFLICT(k) DO UPDATE SET v='1'")
+    con.commit()
 
 
 def _now() -> str:
@@ -103,8 +152,12 @@ def log_touch(con, venture: str, target: str, kind: str, note: str = "",
                VALUES (?,?,?,?,?)""",
             (due, venture, target, f"day-{followup_days} after {kind}", _now()))
         fid = cur.lastrowid
-    con.execute("UPDATE leads SET last_touch=?, status='working' "
-                "WHERE lower(name)=lower(?) AND status IN ('open','working')", (_now(), target))
+    con.execute("UPDATE leads SET last_touch=?, status='working', "
+                "stage=CASE WHEN ?='replied' AND stage NOT IN ('quoted') THEN 'talking' "
+                "WHEN stage='new' OR stage IS NULL OR stage='' THEN 'contacted' "
+                "ELSE stage END "
+                "WHERE lower(name)=lower(?) AND status IN ('open','working')",
+                (_now(), kind, target))
     con.commit()
     return fid
 
@@ -145,12 +198,42 @@ def log_spend(con, amount: float, venture: str, what: str = "") -> None:
 
 
 def add_lead(con, name: str, phone: str = "", service: str = "", note: str = "",
-             venture: str = "") -> int:
+             venture: str = "", stage: str = "new", source: str = "manual",
+             intent: str = "", first_seen: str = "", link: str = "",
+             next_due: str = "") -> int:
+    if stage not in STAGES:
+        stage = "new"  # junk from a caller never invents a stage
+    if source not in SOURCES:
+        source = "manual"
     cur = con.execute(
-        "INSERT INTO leads (added, name, phone, service, note, venture) VALUES (?,?,?,?,?,?)",
-        (_now(), name, phone, service, redact.scrub(note), venture))
+        """INSERT INTO leads (added, name, phone, service, note, venture,
+                              stage, source, intent, first_seen, link, next_due, status)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (_now(), name, phone, service, redact.scrub(note), venture,
+         stage, source, intent or service, first_seen or _now()[:10], link, next_due,
+         _STAGE_TO_STATUS[stage]))
     con.commit()
     return cur.lastrowid
+
+
+def lead_set_stage(con, lead_id: int, stage: str, note: str = "",
+                   next_due: str = "") -> bool:
+    """Move a lead to a pipeline stage. Whitelisted; mirrors the legacy status
+    column so every pre-0.11 query keeps seeing the same truth."""
+    if stage not in STAGES:
+        return False
+    row = con.execute("SELECT id FROM leads WHERE id=?", (lead_id,)).fetchone()
+    if not row:
+        return False
+    con.execute("UPDATE leads SET stage=?, status=?, last_touch=?, "
+                "next_due=CASE WHEN ?='' THEN next_due ELSE ? END WHERE id=?",
+                (stage, _STAGE_TO_STATUS[stage], _now(), next_due, next_due, lead_id))
+    if note:
+        con.execute("INSERT INTO touches (ts, venture, target, kind, note) "
+                    "SELECT ?, venture, name, 'stage', ? FROM leads WHERE id=?",
+                    (_now(), redact.scrub(note), lead_id))
+    con.commit()
+    return True
 
 
 def touch_lead(con, lead_id: int, kind: str, amount=None, note: str = "") -> None:
@@ -161,17 +244,21 @@ def touch_lead(con, lead_id: int, kind: str, amount=None, note: str = "") -> Non
     # per-venture ROI stays honest instead of piling every collection into one bucket.
     venture = row["venture"] or "leads"
     if kind == "quoted" and amount:
-        con.execute("UPDATE leads SET quoted=?, last_touch=?, status='working' WHERE id=?",
-                    (amount, _now(), lead_id))
+        con.execute("UPDATE leads SET quoted=?, last_touch=?, status='working', "
+                    "stage=CASE WHEN stage IN ('won','lost') THEN stage ELSE 'quoted' END "
+                    "WHERE id=?", (amount, _now(), lead_id))
     elif kind == "collected" and amount:
         con.execute("UPDATE leads SET collected=COALESCE(collected,0)+?, last_touch=?, "
-                    "status='won' WHERE id=?", (amount, _now(), lead_id))
+                    "status='won', stage='won' WHERE id=?", (amount, _now(), lead_id))
         log_cash(con, amount, venture, f"lead: {row['name']}")
     elif kind == "lost":
-        con.execute("UPDATE leads SET status='lost', last_touch=? WHERE id=?", (_now(), lead_id))
-    else:  # called / texted / emailed …
-        con.execute("UPDATE leads SET last_touch=?, status='working' WHERE id=?",
+        con.execute("UPDATE leads SET status='lost', stage='lost', last_touch=? WHERE id=?",
                     (_now(), lead_id))
+    else:  # called / texted / emailed … — a contact touch advances 'new' only,
+        # never demotes a lead already talking/quoted.
+        con.execute("UPDATE leads SET last_touch=?, status='working', "
+                    "stage=CASE WHEN stage='new' OR stage IS NULL OR stage='' "
+                    "THEN 'contacted' ELSE stage END WHERE id=?", (_now(), lead_id))
         con.execute("INSERT INTO touches (ts, venture, target, kind, note) VALUES (?,?,?,?,?)",
                     (_now(), venture, row["name"], kind, redact.scrub(note)))
     con.commit()
@@ -266,7 +353,8 @@ _LEAD_SORTS = {  # whitelist: sort key -> ORDER BY (never interpolate user input
 }
 
 
-def leads_all(con, q: str = "", status: str = "", sort: str = "newest") -> list:
+def leads_all(con, q: str = "", status: str = "", sort: str = "newest",
+              stage: str = "") -> list:
     """The full-workspace query: every lead, filterable and sortable. Same
     %_-escaped LIKE discipline as search_ops — query text is always literal."""
     where, params = [], []
@@ -275,6 +363,9 @@ def leads_all(con, q: str = "", status: str = "", sort: str = "newest") -> list:
         where.append(r"(name LIKE ? ESCAPE '\' OR phone LIKE ? ESCAPE '\' "
                      r"OR service LIKE ? ESCAPE '\' OR note LIKE ? ESCAPE '\')")
         params += [pat] * 4
+    if stage in STAGES:  # whitelist — junk stage param means no stage filter
+        where.append("stage = ?")
+        params.append(stage)
     if status == "open":
         where.append("status IN ('open','working')")
     elif status == "quoted":
@@ -287,6 +378,33 @@ def leads_all(con, q: str = "", status: str = "", sort: str = "newest") -> list:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY " + _LEAD_SORTS.get(sort, _LEAD_SORTS["newest"])
     return con.execute(sql, params).fetchall()
+
+
+def leads_by_stage(con, q: str = "") -> dict:
+    """One query, bucketed by stage for the pipeline board. Within a stage,
+    next_due first (overdue work floats), then newest."""
+    rows = leads_all(con, q=q, sort="newest")
+    buckets = {s: [] for s in STAGES}
+    for r in rows:
+        buckets.get(r["stage"] or "new", buckets["new"]).append(r)
+    today = _today().isoformat()
+    for s in buckets:
+        buckets[s].sort(key=lambda r: (
+            0 if (r["next_due"] and r["next_due"] <= today) else 1,
+            r["next_due"] or "9999",
+            r["added"] or ""), reverse=False)
+    return buckets
+
+
+def leads_stage_counts(con) -> dict:
+    out = {s: 0 for s in STAGES}
+    out["all"] = 0
+    for r in con.execute("SELECT COALESCE(NULLIF(stage,''),'new') s, COUNT(*) c "
+                         "FROM leads GROUP BY 1"):
+        if r["s"] in out:
+            out[r["s"]] += r["c"]
+        out["all"] += r["c"]
+    return out
 
 
 def lead_get(con, lead_id: int):

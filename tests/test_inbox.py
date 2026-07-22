@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT))
 
 LEADS = {"leads": [
     {"name": "Kestrel Detailing", "phone": "(555) 010-0199", "service": "full detail",
-     "note": "asked about pricing", "date": "2026-07-16", "link": "https://leads.example/k1"},
+     "note": "asked about pricing", "date": "2026-07-16", "link": "https://leads.example/k1",
+     "source": "lsa", "replied": True},
     {"name": "", "phone": "555-010-0245", "service": "interior"},
     {"name": "No Phone Person"},                       # unverifiable -> skipped
 ], "missed_calls": 3}
@@ -46,9 +47,18 @@ def main():
         leads = ops.leads_open(ocon)
         assert len(leads) == 2, [dict(x) for x in leads]
         named = {x["name"] for x in leads}
-        assert "Kestrel Detailing" in named and "interior lead" in named, named
+        # synthesized names are human ("Interior · 555-010-0245"), never "x lead"
+        assert "Kestrel Detailing" in named and "Interior · 555-010-0245" in named, named
         k = next(x for x in leads if x["name"] == "Kestrel Detailing")
-        assert "lead date 2026-07-16" in k["note"] and "leads.example" in k["note"], k["note"]
+        # provenance lands in structured columns, not flattened into the note
+        assert k["first_seen"] == "2026-07-16", dict(k)
+        assert k["link"] == "https://leads.example/k1", dict(k)
+        assert k["source"] == "lsa" and k["intent"] == "full detail", dict(k)
+        assert k["stage"] == "talking", dict(k)     # replied:true → talking, call due today
+        assert k["next_due"], dict(k)
+        assert k["note"] == "asked about pricing", k["note"]
+        i = next(x for x in leads if x["name"].startswith("Interior"))
+        assert i["stage"] == "new" and i["source"] == "import", dict(i)
         assert ops.kv_get(ocon, "missed_calls") == "3"
         # same phone, different formatting -> still a dupe
         drop.write_text(json.dumps({"leads": [{"name": "K again", "phone": "5550100199"}]}))
