@@ -136,7 +136,8 @@ def main():
         # v0.7.0 reorg: the NOW tab is one ranked DO NOW stack, and the page's <div>s
         # must balance (a stray close leaks NOW content onto every other tab).
         page = urllib.request.urlopen(base + "/", timeout=5).read().decode()
-        assert "DO NOW —" in page, "ranked action stack missing"
+        assert "DO NOW" in page and "most money first" in page, \
+            "ranked action stack missing"
         assert page.count("<div") == page.count("</div>"), \
             f"div imbalance: {page.count('<div')} open vs {page.count('</div>')} close"
         # the panel that holds NOW must actually close before the ventures panel opens

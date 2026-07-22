@@ -255,7 +255,8 @@ def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
     head = (f"{live} live" + (f" · <b class='go'>{co} cowork</b>" if co else "")
             + (f" · {len(queued)} queued" if queued else ""))
     return (f"<div class='card sessions'><div class='cardhead'>"
-            f"<h3>🟢 AGENTS RUNNING — {head}</h3></div><div class='sess-row'>{chips}</div></div>")
+            f"<h3>🟢 AGENTS RUNNING</h3><span class='meta'>{head}</span></div>"
+            f"<div class='sess-row'>{chips}</div></div>")
 
 
 def md_html(md: str) -> str:
@@ -330,8 +331,21 @@ def _proposals_strip(sx) -> str:
     if not props:
         return ""
     tok = sx["token"]
-    rows = ""
+    # different runs often stage the SAME proposal (verb+summary); rendering all
+    # of them reads as clutter AND invites double-applying a $ write. Group them:
+    # one row, a ×N chip, apply/dismiss act on the first — the rest surface (or
+    # get dismissed) one at a time, never blind-bulk-applied.
+    groups, order = {}, []
     for p in props:
+        key = (p["verb"], p["summary"])
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(p)
+    rows = ""
+    for key in order:
+        dupes = groups[key]
+        p = dupes[0]
         tag, tagcls = _PROP_TAGS.get(p["verb"], (p["verb"].upper()[:10], "dim"))
         prov = (f"<a class='btn small gray' href='/do?launched={esc(p['dispatch_ts'])}'>log</a>"
                 if _DISPATCH_TS.match(p["dispatch_ts"] or "") else "")
@@ -341,9 +355,13 @@ def _proposals_strip(sx) -> str:
                 + _f(tok, {"do": "proposal_apply", "pid": p["id"]}, "✓ apply",
                      confirm=confirm)
                 + _f(tok, {"do": "proposal_dismiss", "pid": p["id"]}, "×", "btn small gray"))
-        rows += _stack_row(tag, tagcls, esc(p["summary"]), "", btns)
+        dupe = (f" <span class='pill' title='{len(dupes) - 1} more identical pending "
+                f"proposal{'s' if len(dupes) > 2 else ''} — they surface after this "
+                f"one is decided'>×{len(dupes)}</span>" if len(dupes) > 1 else "")
+        rows += _stack_row(tag, tagcls, esc(p["summary"]) + dupe, "", btns)
     return (f"<div class='card action stack'><div class='cardhead'>"
-            f"<h3>🤖 AGENT PROPOSES — {len(props)} pending · nothing applies without your tap</h3>"
+            f"<h3>🤖 AGENT PROPOSES — {len(props)} pending</h3>"
+            f"<span class='meta'>nothing applies without your tap</span>"
             f"</div>{rows}</div>")
 
 
@@ -472,8 +490,7 @@ def _promises_drawer(sx, tok) -> str:
                  + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "×", "btn small gray")
                  + "</div></div>")
     return (f"<details class='card stack'><summary style='padding:0 16px'>📦 PROMISES — "
-            f"{len(proms)} staged by agent sessions (money work also ranks above)"
-            f"</summary>{rows}</details>")
+            f"{len(proms)} staged by agent sessions</summary>{rows}</details>")
 
 
 def _do_now_stack(sx, st, tok) -> str:
@@ -600,7 +617,8 @@ def _do_now_stack(sx, st, tok) -> str:
                  f"+{len(tail_items)} more ranked below</summary>"
                  + "".join(h for _, h in tail_items) + "</details>")
     return (f"<div class='card action stack'><div class='cardhead'>"
-            f"<h3>▶ DO NOW — {len(items)} ranked, most money first</h3></div>{rows}</div>")
+            f"<h3>▶ DO NOW</h3><span class='meta'>{len(items)} ranked · most money "
+            f"first</span></div>{rows}</div>")
 
 
 def _venture_of(r):
@@ -646,7 +664,7 @@ def _serve_now_block(sx, st) -> str:
     stack = (_counsel_card(sx) + _ask_bar(sx) + _proposals_strip(sx)
              + _do_now_stack(sx, st, tok))
     vopts = _vopts()
-    quick = f"""<details class="card logit"><summary>✍️ LOG IT — record a touch, cash, or lead (every touch schedules its day-3 follow-up)</summary>
+    quick = f"""<details class="card logit"><summary>✍️ LOG IT — touch · cash · lead · capture</summary>
 <div class="cardhead"><a class="btn small gray" href="/draft">✍ draft a reply</a></div>
 <form class="row" method="post" action="/act">
 <input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="touch">
@@ -723,7 +741,7 @@ def _hot_lanes(sx, tok) -> str:
                  f"<span class='hint'>{esc(why)}</span>{more}</div>"
                  f"<table>{''.join(_lead_row(tok, r, today) for r in rows)}</table></div>")
     return (f"<div class='card' id='lanes'><div class='cardhead'>"
-            f"<h3>📇 PIPELINE — {hot} hot</h3><span>{board_link}</span></div>"
+            f"<h3>📇 PIPELINE — {hot} hot</h3><span class='meta'>{board_link}</span></div>"
             f"{secs}</div>")
 
 
@@ -790,6 +808,17 @@ select.stg{width:auto;padding:4px 6px;font-size:12px}
 .subnav a:hover{color:var(--ink);background:var(--surface)}
 .subnav a.on{color:var(--go);background:var(--go-dim);border-color:var(--go-line)}
 .subnav a.minor{opacity:.72}
+.cardhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  flex-wrap:wrap;margin-bottom:9px}
+.cardhead .meta{font:600 11px var(--mono);color:var(--faint);letter-spacing:.03em;text-align:right}
+details.more{display:inline-block;border:0;padding:0;vertical-align:middle}
+details.more>summary{list-style:none;display:inline-block;cursor:pointer;
+  border:1px solid var(--line);border-radius:7px;padding:3px 9px;color:var(--faint);
+  font:700 12px/1.2 var(--mono);background:var(--surface2)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary:hover{color:var(--ink);border-color:var(--line2)}
+details.more[open]>summary{color:var(--go);border-color:var(--go-line)}
+.more-row{display:inline-flex;gap:5px;align-items:center;flex-wrap:wrap;margin-left:6px}
 """
 
 # ONE nav definition for the whole product: four primaries, two minor panels.
@@ -916,16 +945,17 @@ def _lead_temp(age: int) -> str:
 
 
 def _lead_actions(tok, r) -> str:
-    """The per-lead action set — one place, used by every surface. Draft, called,
-    quoted-$, collected-$, a stage move, and a ▶ dispatch with the lead baked in."""
+    """The per-lead action set — one place, used by every surface. TWO actions
+    visible (☎ called, ▶ dispatch); the money + stage moves (draft, quoted-$,
+    collected-$, stage) fold behind ⋯ — same forms, same verbs, on demand. Five
+    always-open controls per row was the single loudest source of visual noise."""
     task = f"Call {r['name']} about {r['service'] or 'their request'}"
     cur = (r["stage"] if "stage" in r.keys() else "") or "new"
     stage_opts = "".join(f"<option value='{s}'{' selected' if s == cur else ''}>{s}</option>"
                          for s in ops.STAGES)
-    return (
-        f"<a class='btn small gray' href='{esc(draft_url(r['venture'] or '', r['name']))}'>✍</a>"
-        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called", "back": "/leads"},
-             "☎ called", "btn small gray")
+    folded = (
+        f"<a class='btn small gray' title='draft a reply' "
+        f"href='{esc(draft_url(r['venture'] or '', r['name']))}'>✍ draft</a>"
         + f"""<form class='inline' method='post' action='/act'>
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
 <input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='quoted'>
@@ -942,8 +972,14 @@ def _lead_actions(tok, r) -> str:
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_stage'>
 <input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='back' value='/leads'>
 <select name='stage' class='stg'>{stage_opts}</select>
-<button class='btn small gray'>set</button></form>"""
-        + f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or '', r['id']))}'>▶</a>")
+<button class='btn small gray'>set</button></form>""")
+    return (
+        _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called", "back": "/leads"},
+           "☎ called", "btn small gray")
+        + f"<a class='btn small gray' title='dispatch to your agent' "
+          f"href='{esc(do_url(task, r['venture'] or '', r['id']))}'>▶</a>"
+        + f"<details class='more'><summary title='quote · collect · stage · draft'>⋯"
+          f"</summary><span class='more-row'>{folded}</span></details>")
 
 
 def _lead_row(tok, r, today) -> str:
@@ -1152,8 +1188,6 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
 }})();
 </script>"""
     body_html = f"""<h1 style="margin-top:10px"><span class="bolt">▶</span> DO IT</h1>
-<p class="hint">The full hand-off brief for this action: the task, your rails, and the live
-operator context. Copy it into any AI chat — or dispatch it straight to your local agent CLI.</p>
 {banner}
 <div class="card">
 <label>the task</label>
@@ -1327,7 +1361,7 @@ def _ask_bar(sx) -> str:
     return f"""<div class="card"><form method="post" action="/act" class="row">
 <input type="hidden" name="token" value="{esc(tok)}"><input type="hidden" name="do" value="ask">
 <input name="question" maxlength="500" required style="flex:3"
- placeholder="🧠 ask the board anything — what should I do about…">
+ placeholder="🧠 ask the board anything…">
 <select name="venture" style="flex:1">{_vopts()}</select>
 <button class="btn small" style="flex:0">ask</button></form></div>"""
 
@@ -1724,8 +1758,7 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
 {trap_rows}</table>
 <p class="hint">Rule: no building unless it produces cash in-window or unblocks a revenue-track close.</p>
 </details>""" if trap_rows else ""
-    ventures_tab = f"""<p class="hint">Click any venture for its full brief: what's next, what's done, every target.</p>
-<div class="grid">{rev_cards}</div>{trap_block}"""
+    ventures_tab = f"""<div class="grid">{rev_cards}</div>{trap_block}"""
 
     # ---------- MONEY ----------
     if goal:
@@ -1760,9 +1793,7 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     {pl_cells or f"<div><span class='rlbl'>baseline {_src_pill(st)}</span><span class='rnum sm'>{esc(st['baseline_raw'][:28]) or '—'}</span></div>"}
   </div>
   {band}
-  <p class="hint">Cash counts only when <b>collected</b> — not quoted, not booked.
-  {"Log it in the ledger below and this meter moves." if serve_ctx else
-   "Update the Live-state table in your dashboard note; opsroom reads it on every refresh."}</p>
+  <p class="hint">Cash counts only when <b>collected</b> — not quoted, not booked.</p>
 </section>"""
         if serve_ctx:
             money_tab += _ledger_cards(serve_ctx)
@@ -1824,7 +1855,7 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     qval = esc(search_ctx["q"]) if search_ctx else ""
     qbox = (f"<form class='qsearch' method='get' action='/search'>"
             f"<input class='search' name='q' value='{qval}' "
-            f"placeholder='⌕ search everything — activity, commits, leads, touches, inbox'>"
+            f"placeholder='⌕ search everything · press / for commands'>"
             f"</form>" if serve_ctx else "")
     search_panel = _search_panel(search_ctx) if search_ctx else ""
     default_tab = "search" if search_ctx else "now"
@@ -1860,6 +1891,10 @@ b{{font-weight:650}}
 header{{position:sticky;top:0;z-index:var(--z-sticky);
   background:linear-gradient(var(--bg),rgba(10,11,13,.92));backdrop-filter:blur(8px);
   border-bottom:1px solid var(--line);padding:11px 18px 0;}}
+/* the header rides the same 920px column as the content — a full-bleed HUD over
+   a centered page was half the "spread out" feeling */
+header>.brand,header>.hud,header>.qsearch,header>nav{{max-width:920px;
+  margin-left:auto;margin-right:auto}}
 header::before{{content:"";position:absolute;inset:0 0 auto;height:1px;
   background:linear-gradient(90deg,transparent,var(--go-line),transparent);opacity:.6}}
 .brand{{display:flex;align-items:baseline;gap:10px;margin-bottom:9px}}
@@ -1875,13 +1910,14 @@ header::before{{content:"";position:absolute;inset:0 0 auto;height:1px;
 .hud-num{{font-size:19px;font-weight:600;color:var(--ink);letter-spacing:-.01em}}
 .hud-num.go{{color:var(--go)}} .hud-num.warn{{color:var(--warn)}} .hud-num.leak{{color:var(--leak)}}
 .hud-lbl{{font-size:11px;color:var(--dim);letter-spacing:.02em}}
-nav{{display:flex;gap:4px;margin:10px -2px 0;padding-bottom:9px}}
-nav a{{flex:1;text-align:center;padding:8px 4px;font:600 12.5px var(--sans);letter-spacing:.01em;
+nav{{display:flex;gap:4px;margin:10px 0 0;padding-bottom:9px;align-items:center}}
+nav a{{padding:7px 15px;font:600 12.5px var(--sans);letter-spacing:.01em;
   color:var(--dim);border:1px solid transparent;border-radius:8px;cursor:pointer;text-decoration:none;
   transition:color .18s,background .18s}}
 nav a:hover{{color:var(--ink);background:var(--surface)}}
 nav a.on{{color:var(--go);background:var(--go-dim);border-color:var(--go-line)}}
-nav a.minor{{flex:0 0 44px}}
+nav a.minor{{padding:7px 10px;opacity:.75;margin-left:auto}}
+nav a.minor+a.minor{{margin-left:0}}
 
 main{{max-width:920px;margin:18px auto;padding:0 18px}}
 .panel{{display:none;scroll-margin-top:150px}} .panel.on{{display:block}}
@@ -1896,8 +1932,22 @@ main{{max-width:920px;margin:18px auto;padding:0 18px}}
   padding:15px 16px;margin:13px 0;overflow-x:auto}}
 .card.action{{background:linear-gradient(var(--go-dim),transparent 70%),var(--surface);
   border-color:var(--go-line)}}
-.cardhead{{display:flex;justify-content:space-between;align-items:center;gap:10px;
+.cardhead{{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
   flex-wrap:wrap;margin-bottom:9px}}
+/* the qualifier lives in a quiet meta slot, never in the title sentence */
+.cardhead .meta{{font:600 11px var(--mono);color:var(--faint);letter-spacing:.03em;
+  text-align:right}}
+.cardhead .meta a{{color:var(--faint)}} .cardhead .meta a:hover{{color:var(--cool)}}
+
+/* row actions fold behind ⋯ — one primary action visible, the rest on demand */
+details.more{{display:inline-block;border:0;padding:0;vertical-align:middle}}
+details.more>summary{{list-style:none;display:inline-block;cursor:pointer;
+  border:1px solid var(--line);border-radius:7px;padding:3px 9px;color:var(--faint);
+  font:700 12px/1.2 var(--mono);background:var(--surface2)}}
+details.more>summary::-webkit-details-marker{{display:none}}
+details.more>summary:hover{{color:var(--ink);border-color:var(--line2)}}
+details.more[open]>summary{{color:var(--go);border-color:var(--go-line)}}
+.more-row{{display:inline-flex;gap:5px;align-items:center;flex-wrap:wrap;margin-left:6px}}
 
 /* pipeline hot lanes on NOW */
 .lane{{margin-top:12px}}

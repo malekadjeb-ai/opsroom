@@ -13,3 +13,8 @@ daily/
 .impeccable/
 .claude/
 graphify-out/
+
+# local design-context working docs (not part of the product)
+PRODUCT.md
+DESIGN.md
+.impeccable/
