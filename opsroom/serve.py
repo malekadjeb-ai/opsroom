@@ -77,7 +77,9 @@ def _page(search_q=None) -> bytes:
             "token": TOKEN, "rev": _REV[0],
             "due": ops.followups_due(ocon), "upcoming": ops.followups_upcoming(ocon),
             "cash_total": ops.cash_total(ocon), "cash_entries": ops.cash_entries(ocon),
-            "leads": ops.leads_open(ocon), "tape": ops.today_tape(ocon),
+            "leads": ops.leads_open(ocon), "lead_stages": ops.leads_stage_counts(ocon),
+            "tape": ops.today_tape(ocon),
+            "advise_error": ops.kv_get(ocon, "advise_error", ""),
             "touches": ops.touches_recent(ocon, 12),
             "promises": promises.open_promises(ocon), "captures": ops.captures_open(ocon),
             "replies": inbox.open_replies(ocon),
@@ -188,16 +190,21 @@ class Handler(BaseHTTPRequestHandler):
             from . import dashboard
             qs = urllib.parse.parse_qs(url.query)
             q = (qs.get("q") or [""])[0].strip()[:120]
-            status = (qs.get("status") or [""])[0]
-            status = status if status in ("open", "quoted", "won", "lost") else ""
+            stage = (qs.get("stage") or [""])[0]
+            stage = stage if stage in ops.STAGES else ""
             sort = (qs.get("sort") or ["newest"])[0]
             sort = sort if sort in ("newest", "aged", "quoted") else "newest"
             ocon = ops.connect()
             try:
-                rows = ops.leads_all(ocon, q, status, sort)
-                counts = ops.leads_counts(ocon)
-                self._send(200, dashboard.leads_page(
-                    TOKEN, rows, counts, q, status, sort).encode())
+                counts = ops.leads_stage_counts(ocon)
+                if stage:
+                    rows = ops.leads_all(ocon, q, sort=sort, stage=stage)
+                    page = dashboard.leads_page(TOKEN, {}, counts, q, stage, sort,
+                                                rows=rows)
+                else:
+                    buckets = ops.leads_by_stage(ocon, q)
+                    page = dashboard.leads_page(TOKEN, buckets, counts, q, "", sort)
+                self._send(200, page.encode())
             except Exception as e:
                 self._send(500, f"leads failed:\n{type(e).__name__}: {e}".encode(),
                            "text/plain; charset=utf-8")

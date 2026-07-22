@@ -218,13 +218,19 @@ def run(serve_console: bool = True):
         ops.log_spend(oc, 420, "shopkit", "Stripe fees + hosting")
         ops.log_spend(oc, 180, "meridian", "prospect-list data")
         quoted_id = None
-        for name, phone, svc, note in [
-                ("Rowan Marsh", "5550100231", "full detail", "asked for a Saturday slot"),
-                ("Casey Ito", "5550100544", "interior", "quote sent, no answer yet"),
-                ("Jules Barton", "5550100712", "full detail", "came in from the website form"),
-                ("Avery Chen", "5550100903", "ceramic add-on", "wants the price by text"),
-                ("Marlowe Diaz", "5550100377", "interior", "missed call yesterday")]:
-            lid = ops.add_lead(oc, name, phone, svc, note, venture="detailpro")
+        for name, phone, svc, note, stage, source in [
+                ("Rowan Marsh", "5550100231", "full detail", "asked for a Saturday slot",
+                 "contacted", "lsa"),
+                ("Casey Ito", "5550100544", "interior", "quote sent, no answer yet",
+                 "new", "lsa"),
+                ("Jules Barton", "5550100712", "full detail", "came in from the website form",
+                 "new", "website"),
+                ("Avery Chen", "5550100903", "ceramic add-on", "wants the price by text",
+                 "talking", "referral"),
+                ("Marlowe Diaz", "5550100377", "interior", "missed call yesterday",
+                 "new", "lsa")]:
+            lid = ops.add_lead(oc, name, phone, svc, note, venture="detailpro",
+                               stage=stage, source=source)
             if name == "Casey Ito":
                 quoted_id = lid
         if quoted_id:
@@ -259,8 +265,8 @@ def run(serve_console: bool = True):
                             "repeat customer", venture="detailpro")
         # won directly: their $249 is already inside the "2 details collected"
         # cash entry above — touch_lead would double-count it
-        oc.execute("UPDATE leads SET status='won', collected=249, last_touch=? WHERE id=?",
-                   (now.isoformat(), won1))
+        oc.execute("UPDATE leads SET status='won', stage='won', collected=249, "
+                   "last_touch=? WHERE id=?", (now.isoformat(), won1))
         lost1 = ops.add_lead(oc, "Perry Nolan", "5550101930", "interior",
                              "went with a cheaper quote", venture="detailpro")
         ops.touch_lead(oc, lost1, "lost")

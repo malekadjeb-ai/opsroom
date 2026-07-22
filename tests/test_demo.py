@@ -46,9 +46,10 @@ def main():
         # the /leads workspace over the seeded ledger: filters see every status
         work = urllib.request.urlopen(f"http://127.0.0.1:{port}/leads", timeout=5).read().decode()
         httpd.shutdown()
-        for needle in ("LEADS — 13 shown of 13", "Micah Reyes", "Perry Nolan",
-                       "Sasha Whitfield"):
-            assert needle in work, f"leads workspace missing: {needle}"
+        for needle in ("PIPELINE — 13 leads", "Micah Reyes", "Perry Nolan",
+                       "Sasha Whitfield", "QUOTED · 1", "WON · 1", "LOST · 1",
+                       "TALKING · 1"):
+            assert needle in work, f"pipeline board missing: {needle}"
     print("demo gate: static console + live served demo with a seeded ledger, "
           "pending proposals, and a populated /leads workspace")
     return 0

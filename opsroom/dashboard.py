@@ -9,7 +9,7 @@ import re
 import urllib.parse
 from datetime import datetime, timezone
 
-from . import config, ventures
+from . import config, ops, ventures
 
 PHONE = re.compile(r"\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}")
 DOMAIN = re.compile(r"\b([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+(?:/[^\s,;)|<]*)?)", re.I)
@@ -522,26 +522,21 @@ def _serve_now_block(sx, st) -> str:
         + "</td></tr>" for c in sx["captures"])
     cap_html = (f"<div class='card'><div class='cardhead'><h3>📥 INBOX — {len(sx['captures'])} captured"
                 f"</h3></div><table>{cap_rows}</table></div>" if sx["captures"] else "")
-    lead_rows = "".join(
-        f"<tr><td><b>{esc(r['name'])}</b><br><small>{_linkify(esc(r['phone'] or ''))} · "
-        f"{esc(r['service'] or '')} · {esc(r['status'])}"
-        f"{' · quoted $' + format(int(r['quoted']), ',') if r['quoted'] else ''}</small></td>"
-        f"<td class='acts'>"
-        f"<a class='btn small gray' href='{esc(draft_url(r['venture'] or '', r['name']))}'>✍</a>"
-        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called"}, "☎ called")
-        + f"""<form class='inline' method='post' action='/act'>
-<input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
-<input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='collected'>
-<input name='amount' placeholder='$' class='amt' inputmode='decimal'>
-<button class='btn small'>collected</button></form>"""
-        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "lost"}, "lost", "btn small gray")
-        + "</td></tr>" for r in sx["leads"][:20])
+    today = datetime.now().astimezone().date()
+    lead_rows = "".join(_lead_row(tok, r, today) for r in sx["leads"][:5])
     n_leads = len(sx["leads"])
-    more = (f"<p class='hint'>showing the 20 newest of {n_leads} — "
-            f"<a href='/leads'>open the full workspace →</a></p>" if n_leads > 20 else "")
+    stage_chips = ""
+    if sx.get("lead_stages"):
+        sc = sx["lead_stages"]
+        stage_chips = " · ".join(f"{s} {sc.get(s, 0)}" for s in
+                                 ("new", "contacted", "talking", "quoted") if sc.get(s))
+        stage_chips = f" · {stage_chips}" if stage_chips else ""
+    more = (f"<p class='hint'>the 5 hottest of {n_leads} — "
+            f"<a href='/leads'>open the pipeline →</a></p>" if n_leads > 5 else
+            f"<p class='hint'><a href='/leads'>open the pipeline →</a></p>")
     leads_html = (f"<details class='card' id='leadwork'><summary>📇 LEADS worklist — "
-                  f"{n_leads} open (newest first — speed to lead wins) · "
-                  f"<a href='/leads'>full workspace →</a></summary>"
+                  f"{n_leads} open{stage_chips} · "
+                  f"<a href='/leads'>full pipeline →</a></summary>"
                   f"<table>{lead_rows}</table>{more}</details>" if sx["leads"] else "")
     return missed_html + tape_html + stack + quick + cap_html + leads_html
 
@@ -552,34 +547,86 @@ def draft_url(venture: str, name: str = "", msg: str = "") -> str:
     return f"/draft?{q}"
 
 
-DRAFT_CSS = """
-:root{--bg:#0a0b0d;--surface:#14161a;--line:#24272e;--ink:#eceef1;--dim:#9aa1ac;
-  --faint:#6c727d;--go:#3ddc84;--go-dim:rgba(61,220,132,.13);--go-line:rgba(61,220,132,.32);
-  --cool:#59c1f0;--leak:#ff6b6b;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+BASE_CSS = """
+:root{--bg:#0a0b0d;--bg2:#0d0f12;--surface:#14161a;--surface2:#191c22;
+  --line:#24272e;--line2:#31353e;--ink:#eceef1;--dim:#9aa1ac;--faint:#6c727d;
+  --go:#3ddc84;--go-dim:rgba(61,220,132,.13);--go-line:rgba(61,220,132,.32);
+  --warn:#f2b13c;--warn-dim:rgba(242,177,60,.13);
+  --leak:#ff5f56;--leak-dim:rgba(255,95,86,.12);--leak-line:rgba(255,95,86,.34);
+  --cool:#59c1f0;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-.pill{display:inline-block;border:1px solid var(--line);border-radius:20px;
-  padding:1px 8px;font-size:11px;color:var(--dim);white-space:nowrap}
 *{box-sizing:border-box}
 body{font:15px/1.55 var(--sans);color:var(--ink);background:var(--bg);margin:0;padding:18px}
 main{max-width:760px;margin:0 auto}
 h1{font:800 15px/1 var(--sans);letter-spacing:.14em;margin:0 0 4px}
 h1 .bolt{color:var(--go)}
+h3{margin:0;color:var(--ink);font-size:14.5px;font-weight:600}
 a{color:var(--cool);text-decoration:none}a:hover{text-decoration:underline}
+a.tel{color:var(--go);font-weight:600}
+.go{color:var(--go)}.warn{color:var(--warn)}.leak{color:var(--leak)}.dim{color:var(--dim)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;
-  padding:15px 16px;margin:13px 0}
+  padding:15px 16px;margin:13px 0;overflow-x:auto}
 label{display:block;font:600 11px var(--mono);letter-spacing:.06em;color:var(--faint);
   text-transform:uppercase;margin:10px 0 4px}
-input,select,textarea{width:100%;background:#0d0f12;border:1px solid var(--line);
+input,select,textarea{width:100%;background:var(--bg2);border:1px solid var(--line);
   border-radius:8px;color:var(--ink);padding:9px 11px;font:14px var(--sans)}
 textarea{font-family:var(--sans);min-height:96px;resize:vertical}
 textarea#out{min-height:150px;border-color:var(--go-line);font-size:15px}
 input:focus,select:focus,textarea:focus{outline:0;border-color:var(--go-line)}
+input::placeholder{color:var(--faint)}
 .btn{display:inline-block;background:var(--go);color:#052012;font-weight:700;border:0;
-  cursor:pointer;padding:9px 15px;border-radius:8px;margin-top:10px;font:700 14px var(--sans)}
-.btn.gray{background:#191c22;color:var(--dim);border:1px solid var(--line)}
+  cursor:pointer;padding:9px 15px;border-radius:8px;margin-top:10px;font:700 14px var(--sans);
+  text-decoration:none;white-space:nowrap}
+.btn.gray{background:var(--surface2);color:var(--dim);border:1px solid var(--line)}
+.btn.gray:hover{color:var(--ink);border-color:var(--line2)}
+.btn.small{padding:4px 9px;margin-top:0;font-size:12px}
 .hint{color:var(--dim);font-size:13px;max-width:64ch}
 .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:20px;
+  padding:1px 8px;font-size:11px;color:var(--dim);white-space:nowrap}
+.pill:hover{border-color:var(--go-line)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+td,th{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.acts{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.acts form.inline{display:inline-flex;gap:3px;margin:0}
+input.amt{width:64px;padding:4px 7px}
+select.stg{width:auto;padding:4px 6px;font-size:12px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.banner{border-radius:10px;padding:10px 14px;margin:12px 0;font-weight:600;font-size:14px;
+  display:flex;gap:9px;align-items:baseline}
+.banner.bad{background:var(--leak-dim);color:#ff9b95;border:1px solid var(--leak-line)}
+.subnav{display:flex;gap:4px;margin:10px 0 2px;flex-wrap:wrap}
+.subnav a{padding:6px 12px;font:600 12.5px var(--sans);color:var(--dim);border:1px solid transparent;
+  border-radius:8px;text-decoration:none}
+.subnav a:hover{color:var(--ink);background:var(--surface)}
+.subnav a.on{color:var(--go);background:var(--go-dim);border-color:var(--go-line)}
 """
+
+# every workspace page shares one nav — the product stops hiding behind buried links
+NAV_ITEMS = (("now", "🎯 NOW", "/#now"), ("leads", "📇 LEADS", "/leads"),
+             ("money", "💰 MONEY", "/#money"), ("advisor", "🧠 ADVISOR", "/counsel"),
+             ("ventures", "🏢 VENTURES", "/#ventures"))
+
+
+def _subnav(active: str) -> str:
+    return "<div class='subnav'>" + "".join(
+        f"<a{' class=on' if key == active else ''} href='{href}'>{label}</a>"
+        for key, label, href in NAV_ITEMS) + "</div>"
+
+
+def _chrome(title: str, body: str, active: str = "", extra_css: str = "",
+            wide: bool = False) -> str:
+    """Shared page shell for every workspace page (/leads, /counsel, /draft, /do):
+    one stylesheet, one nav, one place to fix chrome."""
+    width = "main{max-width:1060px}" if wide else ""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(title)} · opsroom</title><style>{BASE_CSS}{width}{extra_css}</style></head><body><main>
+<a href="/">← back to the console</a>
+{_subnav(active)}
+{body}
+</main></body></html>"""
 
 
 def draft_page(token, venture="", msg="", name="", draft=None):
@@ -607,11 +654,7 @@ function cp(){{var t=document.getElementById('out');t.select();
   var b=document.getElementById('cpbtn');b.textContent='✓ copied';
   setTimeout(function(){{b.textContent='⧉ copy draft'}},1200);}}
 </script>"""
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DRAFT · opsroom</title><style>{DRAFT_CSS}</style></head><body><main>
-<a href="/">← back to the console</a>
-<h1 style="margin-top:10px"><span class="bolt">✍</span> REPLY DRAFTER</h1>
+    body = f"""<h1 style="margin-top:10px"><span class="bolt">✍</span> REPLY DRAFTER</h1>
 <p class="hint">Paste what they sent you. The draft comes from YOUR rails — the
 offer line and style you set per venture in config.toml. Deterministic, local, no AI call.</p>
 <div class="card"><form method="get" action="/draft">
@@ -619,8 +662,8 @@ offer line and style you set per venture in config.toml. Deterministic, local, n
 <label>their name (optional)</label><input name="name" value="{esc(name)}" placeholder="first name">
 <label>their message</label><textarea name="msg" placeholder="paste the inbound text / email / DM…">{esc(msg)}</textarea>
 <button class="btn">draft the reply →</button></form></div>
-{result}
-</main></body></html>"""
+{result}"""
+    return _chrome("DRAFT", body)
 
 
 def do_url(task: str, venture: str = "", lead: int = 0) -> str:
@@ -638,83 +681,144 @@ def _lead_age(r, today) -> int:
         return 0
 
 
+def _lead_title(r) -> str:
+    """Human row title. Real names pass through; the pre-0.11 importer's synthetic
+    names ('LSA · lead', 'interior lead') render as what they actually are."""
+    name = (r["name"] or "").strip()
+    synthetic = (name.lower().endswith(" lead") or name.startswith("LSA")
+                 or " · lead" in name.lower() or not name)
+    if not synthetic:
+        return name
+    what = (r["intent"] or r["service"] or "").strip().title() if "intent" in r.keys() \
+        else (r["service"] or "").strip().title()
+    return f"{what or 'Missed call'} · {r['phone'] or '?'}"
+
+
+def _lead_temp(age: int) -> str:
+    """Temperature by age of last touch: fresh is money, a week is a leak."""
+    return "go" if age < 2 else ("warn" if age < 7 else "leak")
+
+
 def _lead_actions(tok, r) -> str:
-    """The per-lead action set — identical semantics to the NOW-tab worklist, plus
-    a quoted-$ form and a per-lead ▶ dispatch that bakes the lead into the brief."""
+    """The per-lead action set — one place, used by every surface. Draft, called,
+    quoted-$, collected-$, a stage move, and a ▶ dispatch with the lead baked in."""
     task = f"Call {r['name']} about {r['service'] or 'their request'}"
+    cur = (r["stage"] if "stage" in r.keys() else "") or "new"
+    stage_opts = "".join(f"<option value='{s}'{' selected' if s == cur else ''}>{s}</option>"
+                         for s in ops.STAGES)
     return (
         f"<a class='btn small gray' href='{esc(draft_url(r['venture'] or '', r['name']))}'>✍</a>"
-        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called"}, "☎ called")
+        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called", "back": "/leads"},
+             "☎ called", "btn small gray")
         + f"""<form class='inline' method='post' action='/act'>
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
 <input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='quoted'>
+<input type='hidden' name='back' value='/leads'>
 <input name='amount' placeholder='$' class='amt' inputmode='decimal'>
 <button class='btn small gray'>quoted</button></form>"""
         + f"""<form class='inline' method='post' action='/act'>
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_touch'>
 <input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='kind' value='collected'>
+<input type='hidden' name='back' value='/leads'>
 <input name='amount' placeholder='$' class='amt' inputmode='decimal'>
 <button class='btn small'>collected</button></form>"""
-        + _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "lost"}, "lost", "btn small gray")
+        + f"""<form class='inline' method='post' action='/act'>
+<input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_stage'>
+<input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='back' value='/leads'>
+<select name='stage' class='stg'>{stage_opts}</select>
+<button class='btn small gray'>set</button></form>"""
         + f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or '', r['id']))}'>▶</a>")
 
 
-def leads_page(token, rows, counts, q="", status="", sort="newest") -> str:
-    """The /leads workspace: the WHOLE lead ledger — search, filter chips, sort,
-    and every action inline. The NOW-tab worklist is the 20-row teaser; this is
-    where a couple hundred leads actually get worked."""
+def _lead_row(tok, r, today) -> str:
+    """THE lead row — the one renderer every surface uses (board, NOW teaser,
+    search). tok=None renders read-only (no write forms)."""
+    age = _lead_age(r, today)
+    open_ish = r["status"] in ("open", "working")
+    tempcls = _lead_temp(age) if open_ish else "dim"
+    src = (r["source"] if "source" in r.keys() else "") or ""
+    src_pill = f" <span class='pill'>{esc(src)}</span>" if src else ""
+    quoted = f" · quoted ${int(r['quoted']):,}" if r["quoted"] else ""
+    won = f" · collected ${int(r['collected']):,}" if r["collected"] else ""
+    due = ""
+    if "next_due" in r.keys() and r["next_due"]:
+        overdue = r["next_due"] <= today.isoformat()
+        due = (f" <span class='pill' style='color:var(--{'leak' if overdue else 'dim'})'>"
+               f"due {esc(r['next_due'])}</span>")
+    what = esc((r["intent"] if "intent" in r.keys() else "") or r["service"] or "")
+    acts = f"<td class='acts'>{_lead_actions(tok, r)}</td>" if tok else ""
+    return (f"<tr><td><b>{esc(_lead_title(r))}</b>{src_pill}{due}<br>"
+            f"<small>{_linkify(esc(r['phone'] or ''))}"
+            f"{' · ' + what if what else ''}{quoted}{won}</small></td>"
+            f"<td style='white-space:nowrap' class='{tempcls}'>~{age}d</td>{acts}</tr>")
+
+
+_STAGE_HINTS = {
+    "new": "untouched — speed to lead wins",
+    "contacted": "you reached out; keep the day-3 cadence",
+    "talking": "live two-way thread — answer fast, push to a quote",
+    "quoted": "money on the table — follow up until yes or no",
+    "won": "collected", "lost": "closed out",
+}
+
+
+def leads_page(token, buckets, stage_counts, q="", stage="", sort="newest",
+               rows=None) -> str:
+    """The /leads PIPELINE: stage-segmented board of the whole lead ledger.
+    No filter → sections per working stage (won/lost collapsed); ?stage=X → one
+    flat table. Every action inline, every write lands back here."""
     today = datetime.now().astimezone().date()
+
     def chip(key, label):
-        n = counts.get(key if key else "all", 0)
-        qs = urllib.parse.urlencode({"q": q, "status": key, "sort": sort})
-        cur = " style='color:var(--go);border-color:var(--go-line)'" if status == key else ""
+        n = stage_counts.get(key if key else "all", 0)
+        qs = urllib.parse.urlencode({"q": q, "stage": key, "sort": sort})
+        cur = " style='color:var(--go);border-color:var(--go-line)'" if stage == key else ""
         return f"<a class='pill'{cur} href='/leads?{qs}'>{esc(label)} {n}</a>"
-    chips = (chip("", "all") + chip("open", "open") + chip("quoted", "quoted")
-             + chip("won", "won") + chip("lost", "lost"))
+
+    chips = chip("", "all") + "".join(chip(s, s) for s in ops.STAGES)
     sopts = "".join(
         f"<option value='{k}'{' selected' if sort == k else ''}>{lbl}</option>"
         for k, lbl in (("newest", "newest first"), ("aged", "most aged first"),
                        ("quoted", "biggest quote first")))
-    body_rows = []
-    for r in rows:
-        age = _lead_age(r, today)
-        agecls = "leak" if age >= 7 and r["status"] in ("open", "working") else "dim"
-        quoted = f" · quoted ${int(r['quoted']):,}" if r["quoted"] else ""
-        won = f" · collected ${int(r['collected']):,}" if r["collected"] else ""
-        body_rows.append(
-            f"<tr><td><b>{esc(r['name'])}</b><br><small>{_linkify(esc(r['phone'] or ''))}"
-            f" · {esc(r['service'] or '')} · {esc(r['status'])}{quoted}{won}</small></td>"
-            f"<td style='white-space:nowrap;color:var(--{agecls})'>~{age}d</td>"
-            f"<td class='acts'>{_lead_actions(token, r)}</td></tr>")
-    table = (f"<table style='width:100%;border-collapse:collapse'>{''.join(body_rows)}</table>"
-             if body_rows else "<p class='hint'>no leads match — clear the filters above,"
-             " or add leads from the NOW tab / a JSON drop.</p>")
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LEADS · opsroom</title><style>{DRAFT_CSS}
-main{{max-width:1060px}}
-table td{{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
-.acts{{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}}
-.acts form.inline{{display:inline-flex;gap:3px;margin:0}}
-.btn.small{{padding:4px 9px;margin-top:0;font-size:12px}}
-input.amt{{width:64px;padding:4px 7px}}
-.chips{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0}}
-.pill:hover{{border-color:var(--go-line)}}
-</style></head><body><main>
-<a href="/">← back to the console</a>
-<h1 style="margin-top:10px"><span class="bolt">📇</span> LEADS — {len(rows)} shown of {counts.get('all', 0)}</h1>
-<p class="hint">Every lead is paid-for money. Filter, sort by age, and work the list —
-each ▶ dispatches an agent with this lead's full context baked into the brief.</p>
-<div class="card">
-<form method="get" action="/leads" class="row">
+    if stage:
+        flat = rows if rows is not None else buckets.get(stage, [])
+        table = ("<table>" + "".join(_lead_row(token, r, today) for r in flat)
+                 + "</table>") if flat else \
+            "<p class='hint'>nothing in this stage — clear the filter above.</p>"
+        board = f"<div class='card'><h3>{esc(stage.upper())} · {len(flat)}</h3>{table}</div>"
+    else:
+        sections = []
+        for s in ("new", "contacted", "talking", "quoted"):
+            rs = buckets.get(s, [])
+            if not rs:
+                continue
+            tbl = "<table>" + "".join(_lead_row(token, r, today) for r in rs) + "</table>"
+            sections.append(
+                f"<div class='card' id='s-{s}'><div style='display:flex;gap:10px;"
+                f"align-items:baseline;flex-wrap:wrap'><h3>{s.upper()} · {len(rs)}</h3>"
+                f"<span class='hint' style='margin:0'>{_STAGE_HINTS[s]}</span></div>{tbl}</div>")
+        for s in ("won", "lost"):
+            rs = buckets.get(s, [])
+            if not rs:
+                continue
+            tbl = "<table>" + "".join(_lead_row(token, r, today) for r in rs) + "</table>"
+            sections.append(f"<details class='card'><summary>{s.upper()} · {len(rs)} — "
+                            f"{_STAGE_HINTS[s]}</summary>{tbl}</details>")
+        board = "".join(sections) if sections else \
+            ("<div class='card'><p class='hint'>no leads yet — add one from the NOW tab, "
+             "or point a JSON drop at the register.</p></div>")
+    total = stage_counts.get("all", 0)
+    body = f"""<h1 style="margin-top:10px"><span class="bolt">📇</span> PIPELINE — {total} leads</h1>
+<p class="hint">Every lead is paid-for money moving toward won or lost. Work top of the
+board first — each ▶ dispatches an agent with this lead's full context baked into the brief.</p>
+<form method="get" action="/leads" class="row" style="margin:12px 0 0">
 <input name="q" value="{esc(q)}" placeholder="search name / phone / service / note">
-<input type="hidden" name="status" value="{esc(status)}">
+<input type="hidden" name="stage" value="{esc(stage)}">
 <select name="sort">{sopts}</select>
 <button class="btn small" style="flex:0">filter</button></form>
 <div class="chips">{chips}</div>
-{table}
-</div>
-</main></body></html>"""
+{board}"""
+    return _chrome("PIPELINE", body, active="leads", wide=True)
 
 
 def do_page(token, task, venture, brief, agent_on, result=None, history=None,
@@ -788,13 +892,7 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
     # live feedback loop: while anything runs, the page re-renders itself
     refresh_js = ("<script>setTimeout(function(){location.reload()},4000)</script>"
                   if (any_running or live_status == "running") else "")
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DO IT · opsroom</title><style>{DRAFT_CSS}
-table td{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;color:var(--dim)}}
-</style></head><body><main>
-<a href="/">← back to the console</a>
-<h1 style="margin-top:10px"><span class="bolt">▶</span> DO IT</h1>
+    body_html = f"""<h1 style="margin-top:10px"><span class="bolt">▶</span> DO IT</h1>
 <p class="hint">The full hand-off brief for this action: the task, your rails, and the live
 operator context. Copy it into any AI chat — or dispatch it straight to your local agent CLI.</p>
 {banner}
@@ -813,8 +911,11 @@ function cp(){{var t=document.getElementById('out');t.select();
   var b=document.getElementById('cpbtn');b.textContent='✓ copied';
   setTimeout(function(){{b.textContent='⧉ copy brief'}},1200);}}
 </script>
-{refresh_js}
-</main></body></html>"""
+{refresh_js}"""
+    return _chrome(
+        "DO IT", body_html,
+        extra_css="table td{padding:5px 8px;border-bottom:1px solid var(--line);"
+                  "text-align:left;color:var(--dim)}")
 
 
 def _plan_rows(token, plan) -> str:
@@ -895,29 +996,25 @@ def counsel_page(token, row, status, tail, props, history, agent_on) -> str:
     hist = (f"<div class='card'><label>recent counsel</label>"
             f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{hist_rows}</table></div>"
             if hist_rows else "")
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>COUNSEL · opsroom</title><style>{DRAFT_CSS}
-main{{max-width:860px}}
-table td{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;color:var(--dim)}}
-.ar{{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}}
-.ar-tag{{font:700 11px var(--mono);border:1px solid var(--line);border-radius:6px;padding:2px 7px}}
-.ar-tag.cool{{color:var(--cool)}}
-.ar-body{{flex:1}}.ar-title{{font-weight:600}}.ar-sub{{color:var(--dim);font-size:13px}}
-.ar-acts{{display:flex;gap:5px}}form.inline{{display:inline}}
-.btn.small{{padding:4px 10px;margin-top:0;font-size:13px}}
-h4,h5{{margin:12px 0 4px}}ol,ul{{margin:6px 0;padding-left:22px}}
-</style></head><body><main>
-<a href="/">← back to the console</a>
-<h1 style="margin-top:10px"><span class="bolt">🧠</span> COUNSEL</h1>
+    page = f"""<h1 style="margin-top:10px"><span class="bolt">🧠</span> ADVISOR</h1>
 <div class="card"><label>{'the question' if row and row['kind'] == 'ask' else 'the briefing'}</label>
 <div style="font-size:16px"><b>{title}</b></div></div>
 {banner}
 {body}
 {ask_form}
 {hist}
-{refresh_js}
-</main></body></html>"""
+{refresh_js}"""
+    return _chrome(
+        "ADVISOR", page, active="advisor",
+        extra_css="""main{max-width:860px}
+table td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;color:var(--dim)}
+.ar{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+.ar-tag{font:700 11px var(--mono);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+.ar-tag.cool{color:var(--cool)}
+.ar-body{flex:1}.ar-title{font-weight:600}.ar-sub{color:var(--dim);font-size:13px}
+.ar-acts{display:flex;gap:5px}form.inline{display:inline}
+.btn.small{padding:4px 10px;margin-top:0;font-size:13px}
+h4,h5{margin:12px 0 4px}ol,ul{margin:6px 0;padding-left:22px}""")
 
 
 def _counsel_card(sx) -> str:
@@ -979,12 +1076,10 @@ def _search_panel(sx):
     ev_html = (f"<h3>ACTIVITY ({len(sx['events'])})</h3><table>"
                f"<tr><th>when</th><th>venture</th><th>kind</th><th>what</th></tr>"
                f"{ev_rows}</table>" if ev_rows else "")
-    lead_rows = "".join(
-        f"<tr><td><b>{esc(r['name'])}</b></td><td>{_linkify(esc(r['phone'] or ''))}</td>"
-        f"<td>{esc(r['service'] or '')}</td><td><span class='pill'>{esc(r['status'])}</span>"
-        f"{' · $' + format(int(r['collected']), ',') if r['collected'] else ''}</td></tr>"
-        for r in sx["leads"])
+    _today_d = datetime.now().astimezone().date()
+    lead_rows = "".join(_lead_row(None, r, _today_d) for r in sx["leads"])
     lead_html = (f"<h3>LEADS ({len(sx['leads'])})</h3><table>{lead_rows}</table>"
+                 f"<p class='hint'><a href='/leads'>open the pipeline →</a></p>"
                  if lead_rows else "")
     touch_rows = "".join(
         f"<tr><td>{esc((r['ts'] or '')[:10])}</td><td><b>{esc(r['target'])}</b></td>"
@@ -1089,6 +1184,51 @@ sim();
 </script></div>"""
 
 
+def _static_now(st, links, send, call) -> str:
+    """The static-snapshot NOW (opsroom dash): hero + SEND/CALL/RESCUE queues.
+    No write-backs — this HTML also has no forms."""
+    hero = f"""<div class="hero"><small>SINGLE HIGHEST CASH ACTION</small>
+<p>{esc(st['one_move'] or '—')}</p></div>"""
+    send_rows = "".join(
+        f"<tr><td><b>{esc(r['target'])}</b></td><td>{esc(r['channel'])}</td>"
+        f"<td><span class='pill ok'>{esc(r['status'])}</span></td><td>{_linkify(esc(r['next']))}</td></tr>"
+        for r in send)
+    mail_btn = (f"<a class='btn' href='{esc(_safe_url(links['mail_drafts']))}' target='_blank'>Open drafts →</a>"
+                if _safe_url(links.get("mail_drafts")) else "")
+    send_html = f"""<div class="card action">
+<div class="cardhead"><h3>📧 SEND — {len(send)} drafts staged (60-second review each)</h3>
+{mail_btn}</div>
+<table>{send_rows}</table></div>""" if send else ""
+    call_rows = ""
+    for r in call:
+        m = PHONE.search(r["next"] or "")
+        tel = (f"<a class='btn small' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>"
+               f"📞 {esc(m.group(0))}</a>") if m else esc(r["next"])
+        call_rows += (f"<tr><td><b>{esc(r['target'])}</b></td>"
+                      f"<td>{esc((r['next'] or '').split(',')[-1].strip()[:40])}</td><td>{tel}</td></tr>")
+    call_html = f"""<div class="card action">
+<div class="cardhead"><h3>📞 CALL — {len(call)} phone-first targets</h3></div>
+<table>{call_rows}</table></div>""" if call else ""
+    leads_html = ""
+    if st["leads_n"]:
+        leads_btn = (f"<a class='btn' href='{esc(_safe_url(links['leads']))}' target='_blank'>Open leads →</a>"
+                     if _safe_url(links.get("leads")) else "")
+        vlabel = ventures.VENTURES.get(st["leads_venture"], {}).get("label", "")
+        aged = f", aged ~{st['leads_age']}d" if st.get("leads_age") else ""
+        leads_html = f"""<div class="card action">
+<div class="cardhead"><h3>🚨 RESCUE — ~{st['leads_n']} open leads{aged}</h3>
+{leads_btn}</div>
+<p class='hint'>Work newest first: call → no answer → voicemail + text within 60s. Log every touch
+in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} →</a>" if st['leads_venture'] else ''}</p></div>"""
+    empty_hint = ""
+    if not (send or call or st["leads_n"]):
+        empty_hint = ("<div class='card'><p class='hint'>No action queue yet. opsroom builds it from "
+                      "your pipeline trackers (TOUCH LOG tables) and dashboard note — run "
+                      "<b>opsroom init</b> to wire yours up, or <b>opsroom demo</b> to see a loaded "
+                      "console.</p></div>")
+    return hero + send_html + call_html + leads_html + empty_hint
+
+
 def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=None):
     links = config.load()["links"]
     today = datetime.now().astimezone().date()
@@ -1123,52 +1263,8 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
         ribbon = f"<div class='banner bad'>⚠ notes unreadable ({esc(st['degraded'][0])}) — {esc(note)}</div>"
     leak = (f"<div class='banner bad'>TOP LEAK: {esc(st['top_leak'])}</div>"
             if st["top_leak"] != "none detected" else "")
-    hero_btns = ""
-    if serve_ctx and st.get("one_move"):
-        hero_btns = (f"<p style='margin:10px 0 0'>"
-                     f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it — open the brief</a>"
-                     f"</p>")
-    hero = f"""<div class="hero"><small>SINGLE HIGHEST CASH ACTION</small>
-<p>{esc(st['one_move'] or '—')}</p>{hero_btns}</div>"""
-    send_rows = "".join(
-        f"<tr><td><b>{esc(r['target'])}</b></td><td>{esc(r['channel'])}</td>"
-        f"<td><span class='pill ok'>{esc(r['status'])}</span></td><td>{_linkify(esc(r['next']))}</td></tr>"
-        for r in send)
-    mail_btn = (f"<a class='btn' href='{esc(_safe_url(links['mail_drafts']))}' target='_blank'>Open drafts →</a>"
-                if _safe_url(links.get("mail_drafts")) else "")
-    send_html = f"""<div class="card action">
-<div class="cardhead"><h3>📧 SEND — {len(send)} drafts staged (60-second review each)</h3>
-{mail_btn}</div>
-<table>{send_rows}</table></div>""" if send else ""
-    call_rows = ""
-    for r in call:
-        m = PHONE.search(r["next"] or "")
-        tel = (f"<a class='btn small' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>"
-               f"📞 {esc(m.group(0))}</a>") if m else esc(r["next"])
-        call_rows += (f"<tr><td><b>{esc(r['target'])}</b></td>"
-                      f"<td>{esc((r['next'] or '').split(',')[-1].strip()[:40])}</td><td>{tel}</td></tr>")
-    call_html = f"""<div class="card action">
-<div class="cardhead"><h3>📞 CALL — {len(call)} phone-first targets</h3></div>
-<table>{call_rows}</table></div>""" if call else ""
-    leads_html = ""
-    if st["leads_n"]:
-        leads_btn = (f"<a class='btn' href='{esc(_safe_url(links['leads']))}' target='_blank'>Open leads →</a>"
-                     if _safe_url(links.get("leads")) else "")
-        vlabel = ventures.VENTURES.get(st["leads_venture"], {}).get("label", "")
-        aged = f", aged ~{st['leads_age']}d" if st.get("leads_age") else ""
-        leads_html = f"""<div class="card action">
-<div class="cardhead"><h3>🚨 RESCUE — ~{st['leads_n']} open leads{aged}</h3>
-{leads_btn}</div>
-<p class='hint'>Work newest first: call → no answer → voicemail + text within 60s. Log every touch
-in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} →</a>" if st['leads_venture'] else ''}</p></div>"""
     stale = "".join(f"<span class='pill warn'>{esc(p['name'])} untouched {p['age_days']}d</span>"
                     for p in st["pipelines"] if p["age_days"] >= 3)
-    empty_hint = ""
-    if not (send or call or st["leads_n"]):
-        empty_hint = ("<div class='card'><p class='hint'>No action queue yet. opsroom builds it from "
-                      "your pipeline trackers (TOUCH LOG tables) and dashboard note — run "
-                      "<b>opsroom init</b> to wire yours up, or <b>opsroom demo</b> to see a loaded "
-                      "console.</p></div>")
     if serve_ctx:
         # LIVE: one ranked stack does the work; momentum + live sessions sit above it.
         momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
@@ -1181,7 +1277,8 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
                    + (f"<p>{stale}</p>" if stale else ""))
     else:
         # STATIC snapshot (opsroom dash): the classic hero + queues, no write-backs.
-        now_tab = ribbon + leak + hero + send_html + call_html + leads_html + empty_hint + (
+        # Built only here — live requests never pay for HTML they throw away.
+        now_tab = ribbon + leak + _static_now(st, links, send, call) + (
             f"<p>{stale}</p>" if stale else "")
 
     # ---------- VENTURES ----------
@@ -1364,6 +1461,7 @@ nav a{{flex:1;text-align:center;padding:8px 4px;font:600 12.5px var(--sans);lett
   transition:color .18s,background .18s}}
 nav a:hover{{color:var(--ink);background:var(--surface)}}
 nav a.on{{color:var(--go);background:var(--go-dim);border-color:var(--go-line)}}
+nav a.minor{{flex:0 0 44px}}
 
 main{{max-width:920px;margin:18px auto;padding:0 18px}}
 .panel{{display:none;scroll-margin-top:150px}} .panel.on{{display:block}}
@@ -1586,9 +1684,11 @@ footer b{{color:var(--dim)}}
   {qbox}
   <nav>
     <a data-t="now" href="#now">🎯 NOW</a>
-    <a data-t="ventures" href="#ventures">🏢 VENTURES</a>
+    <a href="/leads">📇 LEADS</a>
     <a data-t="money" href="#money">💰 MONEY</a>
-    <a data-t="activity" href="#activity">📊 ACTIVITY</a>
+    <a href="/counsel">🧠 ADVISOR</a>
+    <a data-t="ventures" href="#ventures">🏢 VENTURES</a>
+    <a data-t="activity" href="#activity" class="minor" title="engineering activity">📊</a>
   </nav>
 </header>
 <main>
