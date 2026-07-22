@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.13.0 — 2026-07-22 · "flight deck"
+
+The fix that mattered and the order the board deserved.
+
+- **THE Chrome bug** — `Referrer-Policy: no-referrer` made Chrome send
+  `Origin: null` on every same-origin form POST, which the same-origin gate
+  rightly rejected: **every button in a real browser died with a misleading
+  "bad token"**. The tests never saw it (urllib sends no Origin at all). Now:
+  `Referrer-Policy: same-origin` (the referrer still never leaves this
+  loopback origin), origin and token refusals split into honestly-named
+  errors, and a browser-origin gate that pins real-browser behavior — with
+  `Origin: null` (a sandboxed iframe's signature) still rejected.
+- **One column** — the header (HUD, search, nav) rides the same 920px column
+  as the content; a full-bleed cockpit over a centered page read as sprawl.
+- **Quiet meta headers** — every section is a short title with its qualifier
+  in a right-aligned mono meta slot ("nothing applies without your tap",
+  "7 ranked · most money first"), never a bold sentence.
+- **Actions on demand** — lead rows show ☎ called and ▶ dispatch; draft /
+  quoted-$ / collected-$ / stage fold behind ⋯ (same forms, same verbs).
+  Five always-open controls per row was the loudest noise on the board.
+- **Proposal grouping** — identical pending proposals render once with a ×N
+  chip, so a double-staged $380 can't be double-applied by reflex; the rest
+  surface one at a time as each is decided.
+- **Less prose everywhere** — sentence-length placeholders, per-card hint
+  paragraphs, and header clauses cut across NOW, BOARD, DO, MONEY, VENTURES.
+- 37 gates green.
+
 ## 0.12.0 — 2026-07-22 · "one board, zero doubt"
 
 Dispatch you can trust, the whole operation on one surface, and every number
