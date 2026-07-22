@@ -304,6 +304,15 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 ops.touch_lead(ocon, int(form["id"]), kind, amt,
                                form.get("note", "")[:300])
+            elif do == "lead_stage":
+                stg = form.get("stage", "")[:12]
+                if stg not in ops.STAGES:
+                    self._send(400, b"unknown stage")
+                    return
+                ops.lead_set_stage(ocon, int(form["id"]), stg,
+                                   form.get("note", "")[:300])
+            elif do == "advise_error_clear":
+                ops.kv_set(ocon, "advise_error", "")
             elif do == "loop":
                 con = db.connect()
                 try:
@@ -443,7 +452,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, b"unknown action")
                 return
             _bump()
-            self._send(303, b"", extra={"Location": "/"})
+            # whitelist, never echo: a form may ask to land back on the board
+            back = "/leads" if form.get("back") == "/leads" else "/"
+            self._send(303, b"", extra={"Location": back})
         except (KeyError, ValueError):
             self._send(400, b"bad request")
         except Exception as e:

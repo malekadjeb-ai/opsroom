@@ -56,10 +56,10 @@ FENCE = re.compile(r"^```opsroom[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 # field -> truncation cap, matching what POST /act enforces on the same fields
 _CAPS = {"target": 120, "kind": 20, "note": 300, "what": 200, "name": 80,
          "phone": 30, "service": 80, "venture": 40, "task": 300, "text": 500,
-         "due": 20}
+         "due": 20, "stage": 12}
 
-VERBS = ("touch", "cash", "spend", "lead_add", "lead_touch", "followup",
-         "capture", "dispatch")
+VERBS = ("touch", "cash", "spend", "lead_add", "lead_touch", "lead_stage",
+         "followup", "capture", "dispatch")
 _LEAD_KINDS = ("called", "texted", "emailed", "quoted", "collected", "lost")
 
 SCHEMA = """
@@ -187,6 +187,13 @@ def validate(obj: dict):
                 return None  # a $0 'collected' is how money vanishes from the goal bar
             out["amount"] = amt
         return out
+    if verb == "lead_stage":
+        lid, stg = obj.get("lead"), _s(obj, "stage")
+        if isinstance(lid, bool) or not isinstance(lid, int) or lid <= 0:
+            return None
+        if stg not in ops.STAGES:
+            return None  # fail-closed: an unknown stage is dropped, not coerced
+        return {"verb": "lead_stage", "lead": lid, "stage": stg, "note": _s(obj, "note")}
     if verb == "followup":
         target, due, venture = _s(obj, "target"), _due(obj), _venture(obj)
         if not target or due is None or venture is None:
@@ -226,6 +233,8 @@ def summarize(payload: dict) -> str:
     if v == "lead_touch":
         amt = f" ${p['amount']:,.0f}" if "amount" in p else ""
         return f"mark lead #{p['lead']} {p['kind']}{amt}"
+    if v == "lead_stage":
+        return f"move lead #{p['lead']} → {p['stage']}"
     if v == "followup":
         return f"schedule follow-up: {p['target']} — due {p['due']}"
     if v == "capture":
@@ -342,6 +351,10 @@ def apply_payload(ocon, payload: dict) -> None:
             raise ValueError(f"lead #{payload['lead']} no longer exists")
         ops.touch_lead(ocon, payload["lead"], payload["kind"], payload.get("amount"),
                        payload["note"])
+    elif v == "lead_stage":
+        if not ops.lead_set_stage(ocon, payload["lead"], payload["stage"],
+                                  payload.get("note", "")):
+            raise ValueError(f"lead #{payload['lead']} no longer exists")
     elif v == "followup":
         ops.followup_add(ocon, payload["target"], payload["due"], payload["venture"],
                          payload["note"])
@@ -418,6 +431,7 @@ block, at the start of a line, one JSON object per block:
 Verbs: touch (target, kind, note) · cash/spend (amount, venture, what) ·
 lead_add (name, phone, service, note, venture) · lead_touch (lead id, kind:
 called/texted/emailed/quoted/collected/lost, amount for quoted/collected) ·
+lead_stage (lead id, stage: new/contacted/talking/quoted/won/lost) ·
 followup (target, due "+2d" or ISO date, note) · capture (text) ·
 dispatch (task, venture — propose the next agent run).
 Use the venture key from this brief. Max 16 proposals.
