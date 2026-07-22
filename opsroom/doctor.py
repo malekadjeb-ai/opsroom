@@ -1,15 +1,25 @@
 """`opsroom doctor` — one command that says why something is quiet.
 
-Read-only. Checks the config, the two databases and their permissions, the
-[agent] wiring (including the launchd bare-PATH trap that silently killed
-dispatches before v0.10.1), the advisor schedule, and the last advisor error
-breadcrumb. Exit 0 = everything load-bearing passes; 1 = at least one FAIL.
+Read-only, with one exception: `--fire` runs an end-to-end test dispatch
+through the REAL configured [agent] command — the whole loop the silent nights
+broke (resolve → launch → log → reap → runs ledger) — and prints an
+exit/duration/output-size verdict. It only ever runs YOUR configured command
+on a synthetic brief, and refuses when [agent] is disabled.
+
+The base checks: config, the two databases and their permissions, the [agent]
+wiring (including the launchd bare-PATH trap that silently killed dispatches
+before v0.10.1), the advisor schedule, and the last advisor error breadcrumb.
+Exit 0 = everything load-bearing passes; 1 = at least one FAIL.
 """
 import os
 import stat
+import time
 from pathlib import Path
 
 from . import config
+
+FIRE_TASK = "Doctor self-test: reply with the single word OK and nothing else."
+FIRE_POLL_S = 2
 
 
 def _line(ok, label, detail="", warn=False):
@@ -18,7 +28,42 @@ def _line(ok, label, detail="", warn=False):
     return ok or warn
 
 
-def run() -> int:
+def _fire() -> bool:
+    """The end-to-end test dispatch. True = the whole loop works."""
+    from . import dispatch, ops, runs
+    r = dispatch.dispatch(FIRE_TASK, kind="doctor")
+    if not r.get("launched"):
+        _line(False, "fire", r.get("error") or "dispatch did not launch")
+        return False
+    print(f"  [....] fire: launched pid via {config.load()['agent']['command'][0]}"
+          f" — waiting (ts {r['ts']})")
+    budget = min(runs._timeout_seconds() or 300, 300) + 15  # watchdog + grace
+    deadline = time.monotonic() + budget
+    row = None
+    while time.monotonic() < deadline:
+        ocon = ops.connect()
+        try:
+            row = runs.get(ocon, r["ts"])
+        finally:
+            ocon.close()
+        if row and row["outcome"] not in ("running",):
+            break
+        time.sleep(FIRE_POLL_S)
+    if not row or row["outcome"] == "running":
+        _line(False, "fire", f"no verdict after {budget:.0f}s — check the log: {r['log']}")
+        return False
+    ok = row["outcome"] == "done"
+    dur = f"{row['duration_s']:.1f}s" if row["duration_s"] is not None else "?"
+    nb = row["stdout_bytes"] if row["stdout_bytes"] is not None else 0
+    _line(ok, "fire", f"exit {row['exit_code']} · {dur} · {nb:,} bytes"
+          + ("" if ok else f" ({row['outcome']})"))
+    if not ok and row["stderr_tail"]:
+        for tl in row["stderr_tail"].strip().splitlines()[-3:]:
+            print(f"         {tl[:160]}")
+    return ok
+
+
+def run(fire: bool = False) -> int:
     from . import counsel, db, dispatch, inbox, ops
     good = True
     print("opsroom doctor\n")
@@ -92,6 +137,15 @@ def run() -> int:
                      ("replies drop", inbox.replies_drop_path())):
         _line(True, label, str(p) + ("" if p.exists() else " (no file yet — that's fine)"),
               warn=True)
+
+    # ---- --fire: the end-to-end loop, through the real configured command
+    if fire:
+        print()
+        if not cfg["agent"].get("enabled"):
+            _line(False, "fire", "--fire needs [agent] enabled — run `opsroom connect`")
+            good = False
+        else:
+            good &= _fire()
 
     print()
     if good:

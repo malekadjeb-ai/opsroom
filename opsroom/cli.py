@@ -163,8 +163,11 @@ def main():
     cp = sub.add_parser("connect", help="wire your agent CLI into [agent] — detects "
                         "claude/codex/gemini, one explicit confirm, terminal-only")
     cp.add_argument("--yes", action="store_true", help="skip confirms (CI/scripts)")
-    sub.add_parser("doctor", help="why is it quiet? config, DB perms, agent "
-                   "resolution, advisor errors — read-only checks")
+    dp = sub.add_parser("doctor", help="why is it quiet? config, DB perms, agent "
+                        "resolution, advisor errors — read-only checks")
+    dp.add_argument("--fire", action="store_true",
+                    help="end-to-end test dispatch through your real [agent] "
+                         "command; prints exit/duration/output-size verdict")
     args = p.parse_args()
 
     if args.cmd is None:  # bare `opsroom` = the live console
@@ -178,7 +181,7 @@ def main():
         return setup.connect(yes=args.yes)
     if args.cmd == "doctor":
         from . import doctor
-        return doctor.run()
+        return doctor.run(fire=args.fire)
     if args.cmd == "demo":
         from . import demo
         return demo.run()
