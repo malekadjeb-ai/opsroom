@@ -12,7 +12,22 @@ def build(con, ocon, st) -> str:
     lines = [
         "# OPERATOR CONTEXT PACK — live from the ledger",
         f"Generated {now} · paste into any AI chat to ground it in the whole operation.\n",
-        "## SITREP",
+        "## LEDGER TRUTH (authoritative)",
+    ]
+    # the numbers an advisor once invented from stray files it found on disk —
+    # now stated up front, from config + the append-only ledger, with an
+    # explicit no-invention rail. If anything below disagrees, THIS wins.
+    cash_t = int(ops.cash_total(ocon) or 0)
+    spend_t = int(ops.spend_total(ocon) or 0)
+    goal_bits = f"${ventures.GOAL_USD:,}" if ventures.GOAL_USD else "not set"
+    if ventures.DEADLINE:
+        goal_bits += f" by {ventures.DEADLINE.isoformat()}"
+    lines += [
+        f"- THE goal: {ventures.GOAL_LABEL or 'no goal configured'} ({goal_bits})",
+        f"- collected to date: ${cash_t:,} · spent: ${spend_t:,} · net: ${cash_t - spend_t:,}",
+        "- These figures are the operator's real config + cash ledger. Quote them",
+        "  exactly; never invent, estimate, or substitute a different goal or total.",
+        "", "## SITREP",
     ]
     lines += views._sitrep_lines(st)
 

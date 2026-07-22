@@ -385,6 +385,25 @@ def _run_fail_alert(row, tok) -> tuple:
             + _f(tok, {"do": "run_ack", "ts": ts}, "dismiss", "btn small gray"))
 
 
+def _src_pill(st) -> str:
+    """The honesty marker: this number/claim comes from your NOTES, not the
+    ledger. Ledger facts never carry it; note-derived survivors always do."""
+    upd = (st.get("dashboard_updated") or "")[:10]
+    title = f"from your dashboard note, updated {upd}" if upd \
+        else "from your dashboard note"
+    return f"<span class='pill src' title='{esc(title)}'>notes</span>"
+
+
+def _note_age_days(st):
+    """Days since the dashboard note was updated (None when unknown)."""
+    upd = (st.get("dashboard_updated") or "")[:10]
+    try:
+        from datetime import date as _date
+        return (datetime.now().astimezone().date() - _date.fromisoformat(upd)).days
+    except ValueError:
+        return None
+
+
 def _alert_slot(sx, st, tok) -> str:
     """ONE banner. Alerts ranked by severity; the winner renders, the rest fold
     into a '+N more' disclosure instead of stacking red bars down the page."""
@@ -408,8 +427,21 @@ def _alert_slot(sx, st, tok) -> str:
         alerts.append((80, f"☎ {sx['missed_calls']} missed calls in the last lead drop"
                            f" — numberless notifications; only your lead source shows who called."
                        + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray")))
-    if st.get("top_leak") and st["top_leak"] != "none detected":
-        alerts.append((70, f"TOP LEAK: {esc(st['top_leak'])}"))
+    leak = st.get("top_leak")
+    if leak and leak != "none detected":
+        if "open leads aged" in leak:
+            # the note's aged-leads claim, RECOMPUTED from the ledger — the two
+            # used to disagree ("~40 leads" from a stale note vs the real board)
+            today = datetime.now().astimezone().date()
+            ages = [_lead_age(r, today) for r in (sx.get("leads") or [])]
+            aged = [a for a in ages if a >= 7]
+            if aged:
+                alerts.append((70, f"TOP LEAK: {len(aged)} open leads aged up to "
+                                   f"{max(aged)}d — paid-for money rotting uncalled "
+                                   f"<a href='/leads?sort=aged'>work them →</a>"))
+        else:
+            # trap-time / blocked / stale-tracker leaks are note+activity claims
+            alerts.append((70, f"TOP LEAK: {esc(leak)} {_src_pill(st)}"))
     if not alerts:
         return ""
     alerts.sort(key=lambda x: -x[0])
@@ -463,7 +495,9 @@ def _do_now_stack(sx, st, tok) -> str:
     # the operator's single top move
     if st.get("one_move"):
         btns = f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it</a>"
-        items.append((92, _stack_row("TOP MOVE", "go", _linkify(esc(st["one_move"])), "", btns)))
+        items.append((92, _stack_row("TOP MOVE", "go",
+                                     _linkify(esc(st["one_move"])) + " " + _src_pill(st),
+                                     "", btns)))
 
     # due follow-ups — the thread dies if you miss these
     for r in sx["due"]:
@@ -737,6 +771,8 @@ input::placeholder{color:var(--faint)}
 .pill{display:inline-block;border:1px solid var(--line);border-radius:20px;
   padding:1px 8px;font-size:11px;color:var(--dim);white-space:nowrap}
 .pill:hover{border-color:var(--go-line)}
+.pill.src{color:var(--warn);border-color:var(--warn-dim);background:var(--warn-dim);
+  font-size:10px;padding:0 7px;cursor:help}
 table{border-collapse:collapse;width:100%;font-size:13.5px}
 td,th{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 tr:last-child td{border-bottom:0}
@@ -1607,8 +1643,20 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
         cash = int(serve_ctx["cash_total"] or 0)
     cash_pct = min(100, round(100 * cash / goal)) if goal else 0
     send, call = _queues(st)
-    leads_n = len(serve_ctx["leads"]) if serve_ctx else (st["leads_n"] or 0)
-    n_actions = len(send) + len(call) + (1 if leads_n else 0)
+    if serve_ctx:
+        # 100% ACCURATE: every HUD number is a ledger fact in served mode — the
+        # lead count AND its age color come from the same rows, and "actions
+        # queued" counts exactly what the page itself asks you to act on
+        leads_n = len(serve_ctx["leads"])
+        led_age = max((_lead_age(r, today) for r in serve_ctx["leads"]), default=0)
+        n_actions = (len(serve_ctx["due"]) + len(serve_ctx["replies"])
+                     + len(serve_ctx["proposals"]) + len(serve_ctx["queued"]))
+        act_lbl = "awaiting your tap"
+    else:
+        leads_n = st["leads_n"] or 0
+        led_age = st["leads_age"] or 0
+        n_actions = len(send) + len(call) + (1 if leads_n else 0)
+        act_lbl = "queued (from notes)"
 
     def _cell(num, lbl, cls=""):
         return (f"<div class='hud-cell'><span class='hud-num {cls}'>{num}</span>"
@@ -1619,9 +1667,9 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     cash_cell = (_cell(f"${cash:,}", f"of {st['goal_label']}", "go")
                  if goal else _cell("—", "set a goal"))
     lead_cell = _cell(f"{leads_n}", "open leads",
-                      "warn" if (st['leads_age'] or 0) >= 7 else "")
+                      "warn" if led_age >= 7 else "")
     head_stats = (f"<div class='hud'>{days_cell}{cash_cell}{lead_cell}"
-                  f"{_cell(f'{n_actions}', 'actions queued')}</div>")
+                  f"{_cell(f'{n_actions}', act_lbl)}</div>")
 
     # ---------- NOW ----------
     ribbon = ""
@@ -1683,8 +1731,12 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     if goal:
         remaining = max(0, goal - cash)  # past the goal: nothing left to raise, not a negative
         per_day = math.ceil(remaining / days) if days and days > 0 else remaining
-        band = (f"<p class='hint'>Honest band: <b>{esc(st['band'])}</b></p>"
-                if st.get("band") else "")
+        # the band is a NOTES claim: it carries the source pill, and once the
+        # note is a week stale it goes entirely — stale-or-go, never quietly wrong
+        note_age = _note_age_days(st)
+        band = ""
+        if st.get("band") and not (note_age is not None and note_age > 7):
+            band = f"<p class='hint'>Honest band: <b>{esc(st['band'])}</b> {_src_pill(st)}</p>"
         days_danger = "leak" if (days is not None and days < 14) else ""
         pl_cells = ""
         if serve_ctx:
@@ -1705,7 +1757,7 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     <div><span class="rlbl">remaining</span><span class="rnum">${remaining:,}</span></div>
     <div><span class="rlbl">days left</span><span class="rnum {days_danger}">{days if days is not None else '—'}</span></div>
     <div><span class="rlbl">needed / day</span><span class="rnum">${per_day:,}</span></div>
-    {pl_cells or f"<div><span class='rlbl'>baseline</span><span class='rnum sm'>{esc(st['baseline_raw'][:28]) or '—'}</span></div>"}
+    {pl_cells or f"<div><span class='rlbl'>baseline {_src_pill(st)}</span><span class='rnum sm'>{esc(st['baseline_raw'][:28]) or '—'}</span></div>"}
   </div>
   {band}
   <p class="hint">Cash counts only when <b>collected</b> — not quoted, not booked.
@@ -1892,6 +1944,8 @@ td.acts{{text-align:right;white-space:nowrap}}
   background:var(--surface2);color:var(--dim);letter-spacing:.02em}}
 .pill.ok{{color:var(--go);background:var(--go-dim)}}
 .pill.warn{{color:var(--warn);background:var(--warn-dim)}}
+.pill.src{{color:var(--warn);background:var(--warn-dim);font-size:10px;
+  padding:1px 7px;cursor:help}}
 .hint{{color:var(--dim);font-size:13px;margin:8px 0 0;max-width:70ch}}
 .hint b{{color:var(--ink)}}
 small{{color:var(--dim)}} .warn{{color:var(--warn)}}
