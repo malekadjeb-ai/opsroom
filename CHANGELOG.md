@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.12.0 — 2026-07-22 · "one board, zero doubt"
+
+Dispatch you can trust, the whole operation on one surface, and every number
+earning its place.
+
+### Dispatch you can trust
+- **The runs ledger** — every agent launch lands in ops.db and every exit is
+  a recorded fact: pid, exit code, duration, output size, scrubbed tail. The
+  v0.11 reaper discarded the return code, so a run that died instantly left a
+  0-byte log and zero trace — and read as "done" after a restart. A reconcile
+  sweep (boot, per render, sync tick) adopts live runs and finalizes orphans;
+  exit codes now survive restarts.
+- **Dead runs go red** — a 0-byte or nonzero-exit run is the console's TOP
+  banner: task, accounting, log link, one-tap dismiss. Backfilled pre-0.12
+  runs mark `unknown` and never false-alarm.
+- **Watchdog** — `[agent] timeout_minutes` (default 30): a hung run gets a
+  group SIGTERM→SIGKILL, a log marker saying why, and a `killed` record.
+- **Auto-retry** — an advisor run that dies at 0 bytes (the unattended one)
+  retries exactly once, both attempts linked in the ledger. Operator runs get
+  the banner instead of a loop.
+- **✕ cancel** — kill a running dispatch from the console; recorded as
+  `cancelled` *before* the signal fires so the verdict can't be overwritten.
+- **A real live tail** — /do grows the log in place via a TS_RE-locked,
+  read-only, scrub-on-read `/tail` endpoint (2s poll) instead of reloading
+  the whole page every 4 seconds.
+- **`opsroom doctor --fire`** — one flag proves the whole loop through your
+  REAL configured command: launch → log → reap → ledger, verdict printed as
+  exit · duration · bytes. Refuses when `[agent]` is disabled.
+- **Stale-code tripwire** — the always-on console banners when the code on
+  disk is newer than what it booted with (the editable-install drift that ran
+  a pre-fix build all night), naming both versions and the restart command.
+- **`[agent] input = "stdin"`** — pipe the brief for CLIs that don't take
+  argv prompts; the default one-argv-no-shell path is unchanged.
+
+### One board
+- **Hot lanes ON NOW** — REPLIED / DUE TODAY / NEW TODAY / QUOTED-going-cold
+  render as ledger-true lanes inside NOW, each row the same `_lead_row`
+  grammar (inline call/quote/collect/stage/dispatch) as the full board, each
+  lead in its hottest lane only. The daily lead loop no longer needs a tab.
+- **Command palette** — `/` or `k` anywhere: jump to any surface, open any
+  hot lead, mark a follow-up done, apply an agent proposal, dispatch the top
+  move, focus search or the ask bar. Server-rendered inert JSON + ~80 lines
+  of stdlib JS; every action fires through the existing CSRF-gated verbs.
+- **One nav** — NOW · BOARD · MONEY · ADVISOR (ventures/activity as minor
+  icons), generated from a single definition on every surface.
+
+### 100% accurate
+- Every HUD number is a ledger fact in served mode — the open-lead count and
+  its warn color come from the same rows; "awaiting your tap" counts exactly
+  what the page asks you to act on. The aged-leads TOP LEAK is recomputed
+  from the ledger, never a stale note.
+- Note-derived claims (TOP MOVE, the honest band, baseline) wear a visible
+  **notes** source pill; the band disappears once the note is a week stale.
+- **LEDGER TRUTH in every brief** — the dispatch/advise brief now leads with
+  the configured goal and the ledger's collected/spent/net, with an explicit
+  no-invention rail, so an advisor can never frame a briefing from stray
+  files again.
+- Operator dates are LOCAL dates: `first_seen` no longer stamps the UTC day
+  (an 11pm lead used to read "first seen tomorrow").
+- New gates: runs ledger, watchdog, retry, tail/cancel, doctor --fire,
+  stale-code, hot lanes, nav, palette, accuracy — 36 total, all green.
+
 ## 0.11.0 — 2026-07-21 · "the operator's cockpit"
 
 The clarity release: know exactly what to do in ten seconds.

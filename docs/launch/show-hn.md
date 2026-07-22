@@ -41,10 +41,19 @@ leads to call — each row DOable in place:
   instead of colliding.
 - A live **AGENTS RUNNING** panel that reads which Claude Code sessions are alive
   right now (interactive, cowork, background), attributed per venture.
-- A full **PIPELINE board** — every lead ever captured in a real stage (new →
+- A full **pipeline BOARD** — every lead ever captured in a real stage (new →
   contacted → talking → quoted → won/lost) with live counts, source pills, and
   age as temperature; each one dispatchable with its history baked into the
-  brief, and agents can propose stage moves you approve with one tap.
+  brief, and agents can propose stage moves you approve with one tap. The
+  board's **hot lanes** (replied / due today / new today / quoted-going-cold)
+  render straight on the NOW surface, and a `/` **command palette** reaches
+  any of it from the keyboard.
+- A **runs ledger** for dispatch trust: every agent run ends in a recorded
+  exit code, duration, and output size. A run that dies silently turns the
+  console red instead of leaving a 0-byte mystery log; a watchdog kills hung
+  runs; `opsroom doctor --fire` proves the whole loop through your real agent
+  CLI on demand. (This exists because five of my own overnight runs once died
+  with zero trace — never again.)
 
 The newest piece closes the loop in the other direction: **agents propose, you
 approve, the ledger moves**. When a dispatched agent finishes, opsroom parses its
