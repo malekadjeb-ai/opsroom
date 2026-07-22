@@ -207,6 +207,11 @@ def _momentum_strip(st, sx, cash, goal, days):
     cls = "go" if pct >= 100 else ("warn" if pct >= 40 else "leak")
     label = (f"${today_cash:,} collected today of ${need_day:,} needed"
              if need_day else f"${today_cash:,} collected today — goal already met")
+    tape = sx.get("tape") or {}
+    if tape:
+        # the pace strip IS today's tape — one surface for "how is today going"
+        label += (f" · {tape.get('touches', 0)} touches · {tape.get('calls', 0)} calls"
+                  f" · {tape.get('sends', 0)} sends")
     return (f"<div class='mo'><div class='mo-head'><span>TODAY'S PACE</span>"
             f"<b class='{cls}'>{pct}%</b></div>"
             f"<div class='mo-bar'><i style='width:{pct}%' class='{cls}'></i></div>"
@@ -348,6 +353,64 @@ def _stack_row(tag, tagcls, title, sub, buttons):
             f"<div class='ar-acts'>{buttons}</div></div>")
 
 
+# a promise only ranks in DO NOW if it reads like money work; coding-session
+# chatter ("committing", "tests staged") lives in the promises drawer instead
+_MONEY_VERB = re.compile(
+    r"(?i)\b(send|call|text|email|invoice|quote|collect|follow.?up|reply|book|close)\b")
+
+
+def _alert_slot(sx, st, tok) -> str:
+    """ONE banner. Alerts ranked by severity; the winner renders, the rest fold
+    into a '+N more' disclosure instead of stacking red bars down the page."""
+    alerts = []  # (severity, html) — higher first
+    if sx.get("advise_error"):
+        alerts.append((100, f"🧠 the advisor hit an error last run — "
+                            f"<code>{esc(sx['advise_error'][:160])}</code> "
+                            f"(run <b>opsroom doctor</b>)"
+                       + _f(tok, {"do": "advise_error_clear"}, "clear", "btn small gray")))
+    if st.get("degraded"):
+        note = f"cached {st['cached'][:16]}" if st.get("cached") else "no cache"
+        alerts.append((90, f"⚠ notes unreadable ({esc(st['degraded'][0])}) — {esc(note)}"))
+    if sx.get("missed_calls"):
+        alerts.append((80, f"☎ {sx['missed_calls']} missed calls in the last lead drop"
+                           f" — numberless notifications; only your lead source shows who called."
+                       + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray")))
+    if st.get("top_leak") and st["top_leak"] != "none detected":
+        alerts.append((70, f"TOP LEAK: {esc(st['top_leak'])}"))
+    if not alerts:
+        return ""
+    alerts.sort(key=lambda x: -x[0])
+    head = f"<div class='banner bad'>{alerts[0][1]}</div>"
+    rest = ""
+    if len(alerts) > 1:
+        inner = "".join(f"<div class='banner bad'>{h}</div>" for _, h in alerts[1:])
+        rest = (f"<details><summary class='hint' style='cursor:pointer'>"
+                f"+{len(alerts) - 1} more alert{'s' if len(alerts) > 2 else ''}</summary>"
+                f"{inner}</details>")
+    return head + rest
+
+
+def _promises_drawer(sx, tok) -> str:
+    """Everything agents staged, collapsed at the bottom of NOW. Money-verb
+    promises also rank in DO NOW; the rest live only here."""
+    proms = sx.get("promises") or []
+    if not proms:
+        return ""
+    rows = ""
+    for p in proms:
+        rows += ("<div class='ar'><span class='ar-tag dim'>STAGED</span>"
+                 f"<div class='ar-body'><div class='ar-title'>{_linkify(esc(p['text'][:160]))}</div>"
+                 f"<div class='ar-sub'>{esc(p['venture'] or '')}</div></div>"
+                 "<div class='ar-acts'>"
+                 f"<a class='btn small gray' href='{esc(do_url(p['text'], p['venture'] or ''))}'>▶</a>"
+                 + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓", "btn small gray")
+                 + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "×", "btn small gray")
+                 + "</div></div>")
+    return (f"<details class='card stack'><summary style='padding:0 16px'>📦 PROMISES — "
+            f"{len(proms)} staged by agent sessions (money work also ranks above)"
+            f"</summary>{rows}</details>")
+
+
 def _do_now_stack(sx, st, tok) -> str:
     """THE surface: one money-ranked list of everything worth doing right now, each
     row DOable inline. Replaces the old pile of separate reply/due/send/call/leads/
@@ -400,28 +463,57 @@ def _do_now_stack(sx, st, tok) -> str:
              else "keep the queue warm"),
             btns)))
 
-    # staged drafts to send, and phone-first targets, from your trackers
+    # staged drafts to send, and phone-first targets, from your trackers.
+    # Repliers stay individual (hottest); routine sends/calls collapse to ONE
+    # row each — the queue is a fact, not seven rows of the same verb.
     send, call = _queues(st)
+    routine_send = []
     for r in send:
-        btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
         if "REPLIED" in (r["status"] or ""):
-            # a tracked target that replied is the hottest thing on the board,
-            # not a routine "send" — rank it just under the drop-file replies
+            btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
             items.append((90, _stack_row("REPLIED", "hot",
                                          f"{esc(r['target'])} replied — answer now",
                                          f"{esc(r['channel'])} · {_linkify(esc(r['next'] or ''))}", btns)))
             continue
+        routine_send.append(r)
+    if len(routine_send) == 1:
+        r = routine_send[0]
+        btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
         items.append((74, _stack_row("SEND", "go", f"Send → {esc(r['target'])}",
                                      f"{esc(r['channel'])} · {_linkify(esc(r['next'] or 'day-3 call'))}", btns)))
-    for r in call:
+    elif routine_send:
+        inner = "".join(
+            f"<div class='ar-sub'>▸ {esc(r['target'])} · {esc(r['channel'])} "
+            f"<a href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a></div>"
+            for r in routine_send)
+        items.append((74, _stack_row(
+            "SEND", "go", f"{len(routine_send)} drafts ready — send them",
+            f"<details><summary style='cursor:pointer'>every target, one tap each</summary>"
+            f"{inner}</details>", "")))
+    if len(call) == 1:
+        r = call[0]
         m = PHONE.search(r["next"] or "")
         tel = (f"<a class='btn small' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>📞 {esc(m.group(0))}</a>"
                if m else f"<a class='btn small gray' href='{esc(do_url('Call ' + r['target']))}'>▶</a>")
         items.append((70, _stack_row("CALL", "cool", f"Call {esc(r['target'])}",
                                      _linkify(esc((r["next"] or "").split(',')[-1].strip()[:60])), tel)))
+    elif call:
+        inner = ""
+        for r in call:
+            m = PHONE.search(r["next"] or "")
+            tel = (f"<a class='tel' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>📞 {esc(m.group(0))}</a>"
+                   if m else "")
+            inner += f"<div class='ar-sub'>▸ {esc(r['target'])} {tel}</div>"
+        items.append((70, _stack_row(
+            "CALL", "cool", f"{len(call)} calls to make — 20 minutes, phone first",
+            f"<details><summary style='cursor:pointer'>every number, tap to dial</summary>"
+            f"{inner}</details>", "")))
 
-    # promises an agent staged and parked on your go
+    # promises an agent staged — ONLY money work ranks here; the rest live in
+    # the PROMISES drawer at the bottom of NOW
     for p in sx["promises"]:
+        if not _MONEY_VERB.search(p["text"] or ""):
+            continue
         btns = f"<a class='btn small gray' href='{esc(do_url(p['text'], p['venture'] or ''))}'>▶ do it</a>" \
             + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓", "btn small gray") \
             + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "×", "btn small gray")
@@ -433,7 +525,13 @@ def _do_now_stack(sx, st, tok) -> str:
         return ("<div class='card'><h3>Nothing queued — you're clear</h3>"
                 "<p class='hint'>Log a touch or drop a lead below, or let the next sync surface "
                 "replies, follow-ups, and staged work.</p></div>")
-    rows = "".join(h for _, h in items)
+    # above the fold: 7 rows max. The tail folds — ranked means the top IS the job.
+    head_items, tail_items = items[:7], items[7:]
+    rows = "".join(h for _, h in head_items)
+    if tail_items:
+        rows += (f"<details><summary class='hint' style='padding:9px 16px;cursor:pointer'>"
+                 f"+{len(tail_items)} more ranked below</summary>"
+                 + "".join(h for _, h in tail_items) + "</details>")
     return (f"<div class='card action stack'><div class='cardhead'>"
             f"<h3>▶ DO NOW — {len(items)} ranked, most money first</h3></div>{rows}</div>")
 
@@ -478,15 +576,6 @@ def _serve_now_block(sx, st) -> str:
     """The reorganized NOW: today's momentum tape, the single ranked DO NOW stack,
     the LOG IT quick-actions, the inbox, and the full leads worklist (collapsed)."""
     tok = sx["token"]
-    tape = sx["tape"]
-    tape_html = (f"<div class='tape'><b>{tape['touches']}</b> touches · "
-                 f"<b>{tape['calls']}</b> calls · <b>{tape['sends']}</b> sends · "
-                 f"<b>${int(tape['cash']):,}</b> collected today</div>")
-    missed_html = ""
-    if sx.get("missed_calls"):
-        missed_html = (f"<div class='banner bad'>☎ {sx['missed_calls']} missed calls in the last "
-                       f"lead drop — numberless notifications; only your lead source shows who called."
-                       + _f(tok, {"do": "missed_clear"}, "clear", "btn small gray") + "</div>")
     stack = (_counsel_card(sx) + _ask_bar(sx) + _proposals_strip(sx)
              + _do_now_stack(sx, st, tok))
     vopts = _vopts()
@@ -538,7 +627,7 @@ def _serve_now_block(sx, st) -> str:
                   f"{n_leads} open{stage_chips} · "
                   f"<a href='/leads'>full pipeline →</a></summary>"
                   f"<table>{lead_rows}</table>{more}</details>" if sx["leads"] else "")
-    return missed_html + tape_html + stack + quick + cap_html + leads_html
+    return stack + quick + cap_html + leads_html + _promises_drawer(sx, tok)
 
 
 def draft_url(venture: str, name: str = "", msg: str = "") -> str:
@@ -1037,16 +1126,23 @@ def _counsel_card(sx) -> str:
     meta = " · ".join(b for b in (
         f"{nplays} play{'s' if nplays != 1 else ''}" if nplays else "",
         f"{nprops} proposal{'s' if nprops != 1 else ''}" if nprops else "") if b)
-    preview = md_html(row["answer"][:1500])
-    more = (f"<p><a href='{ts_link}'>read the rest + the plan →</a></p>"
-            if len(row["answer"]) > 1500 or nplays else
-            f"<p><a href='{ts_link}'>open →</a></p>")
+    # verdict line, not the essay: the first meaningful prose line, one sentence-ish
+    verdict = ""
+    for line in (row["answer"] or "").splitlines():
+        line = line.strip()
+        if line and not line.startswith(("#", "-", "*", "`", ">")):
+            verdict = line[:220] + ("…" if len(line) > 220 else "")
+            break
+    plays = "".join(
+        f"<div class='ar-sub' style='margin-top:3px'>▸ {esc((s.get('task') or '')[:120])}</div>"
+        for s in (row["plan"] or [])[:3])
     return (f"<details class='card' open><summary>🧠 {label} — {when}"
-            f"{' · ' + meta if meta else ''} <a href='{ts_link}'>open →</a></summary>"
-            f"{preview}{more}"
+            f"{' · ' + meta if meta else ''}</summary>"
+            f"<p style='margin:8px 0 0'><b>{esc(verdict) or 'briefing ready'}</b></p>{plays}"
+            f"<p style='margin:8px 0 0'><a href='{ts_link}'>read the full briefing + the plan →</a> "
             + _f(tok, {"do": "counsel_archive", "cid": row["id"]}, "✓ archive",
                  "btn small gray")
-            + "</details>")
+            + "</p></details>")
 
 
 def _ask_bar(sx) -> str:
@@ -1266,13 +1362,14 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     stale = "".join(f"<span class='pill warn'>{esc(p['name'])} untouched {p['age_days']}d</span>"
                     for p in st["pipelines"] if p["age_days"] >= 3)
     if serve_ctx:
-        # LIVE: one ranked stack does the work; momentum + live sessions sit above it.
+        # LIVE: one alert, one pace line, one ranked stack. Ten seconds to "what do I do".
         momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
         sess_strip = _sessions_strip(serve_ctx.get("sessions"),
                                      serve_ctx.get("dispatches"),
                                      serve_ctx.get("queued"), serve_ctx["token"])
         setup = setup_card(serve_ctx["token"]) if serve_ctx.get("setup_needed") else ""
-        now_tab = (setup + ribbon + leak + momentum + sess_strip
+        now_tab = (setup + _alert_slot(serve_ctx, st, serve_ctx["token"])
+                   + momentum + sess_strip
                    + _serve_now_block(serve_ctx, st)
                    + (f"<p>{stale}</p>" if stale else ""))
     else:
