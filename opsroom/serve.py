@@ -391,6 +391,29 @@ class Handler(BaseHTTPRequestHandler):
                                    form.get("note", "")[:300])
             elif do == "advise_error_clear":
                 ops.kv_set(ocon, "advise_error", "")
+            elif do == "reveal":
+                # show a file in Finder. The client sends NAMES, never paths —
+                # the server derives every path itself (zero traversal surface).
+                what = form.get("what", "")
+                ts = form.get("ts", "")[:40]
+                target = None
+                if what in ("brief", "log") and dispatch.TS_RE.match(ts):
+                    p = (config.data_dir() / "dispatch"
+                         / f"{ts}{'-brief.md' if what == 'brief' else '.log'}")
+                    target = p if p.is_file() else None
+                elif what == "config":
+                    p = config.config_dir() / "config.toml"
+                    target = p if p.is_file() else None
+                elif what == "data":
+                    target = config.data_dir()
+                if target is None:
+                    self._send(400, b"unknown reveal target")
+                    return
+                _reveal_target(target)
+                if dispatch.TS_RE.match(ts):
+                    self._send(303, b"", extra={"Location": "/do?" +
+                               urllib.parse.urlencode({"launched": ts})})
+                    return
             elif do == "run_ack":
                 ts = form.get("ts", "")[:40]
                 if not dispatch.TS_RE.match(ts):
@@ -560,6 +583,20 @@ class Handler(BaseHTTPRequestHandler):
                        "text/plain; charset=utf-8")
         finally:
             ocon.close()
+
+
+def _reveal_target(target) -> None:
+    """Show a server-derived path in the OS file browser (Finder / xdg-open).
+    Only ever called with paths the server built itself — never client input."""
+    import subprocess as _sp
+    import sys as _sys
+    from pathlib import Path as _P
+    target = _P(target)
+    if _sys.platform == "darwin":
+        cmd = ["/usr/bin/open", "-R", str(target)]
+    else:
+        cmd = ["xdg-open", str(target if target.is_dir() else target.parent)]
+    _sp.Popen(cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
 
 
 def _sync_loop():

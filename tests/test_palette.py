@@ -28,7 +28,7 @@ label = "Meridian Consulting"
 
 # every do= verb POST /act handles (mirrors the serve.py dispatch chain)
 ACT_VERBS = {"touch", "followup", "cash", "spend", "lead_add", "lead_touch",
-             "lead_stage", "advise_error_clear", "run_ack", "dispatch_cancel",
+             "lead_stage", "advise_error_clear", "run_ack", "dispatch_cancel", "reveal",
              "loop", "capture", "capture_set", "promise", "reply", "missed_clear",
              "dispatch", "proposal_apply", "proposal_dismiss", "ask",
              "counsel_archive", "dispatch_queue", "setup_save"}

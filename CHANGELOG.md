@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.14.0 — 2026-07-22 · "glass box"
+
+Know what you're about to do, where it runs, and where everything lives.
+
+- **NEXT MOVE** — the top-ranked action renders as a hero at the head of
+  DO NOW: one glance, one action. The rest stays a ranked list below it.
+- **⚙ HOW DISPATCH RUNS** — a panel on /do that answers "where does this
+  actually go?": the resolved command (your `[agent]` CLI — the same
+  `claude` as your terminal, run headless and detached; NOT the desktop
+  app), the log path, the watchdog/retry rules, and the config file.
+- **📂 reveal** — every dispatched run, the dispatch folder, and
+  config.toml get a Finder-reveal button (and palette commands). The
+  client only ever sends *names* — brief/log/config/data plus a validated
+  ts — the server derives every path itself; junk is refused.
+- **Direct links where the work happens** — SEND rows link ↗ straight to
+  your configured mail drafts; imported leads with a source URL get ↗ on
+  their row; the palette gains jump-to-section (DO NOW / proposals / hot
+  lanes) so finding a surface is two keystrokes.
+- INBOX folds into a drawer; 38 gates green.
+
 ## 0.13.0 — 2026-07-22 · "flight deck"
 
 The fix that mattered and the order the board deserved.

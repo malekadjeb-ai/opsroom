@@ -359,7 +359,7 @@ def _proposals_strip(sx) -> str:
                 f"proposal{'s' if len(dupes) > 2 else ''} — they surface after this "
                 f"one is decided'>×{len(dupes)}</span>" if len(dupes) > 1 else "")
         rows += _stack_row(tag, tagcls, esc(p["summary"]) + dupe, "", btns)
-    return (f"<div class='card action stack'><div class='cardhead'>"
+    return (f"<div class='card action stack' id='proposals'><div class='cardhead'>"
             f"<h3>🤖 AGENT PROPOSES — {len(props)} pending</h3>"
             f"<span class='meta'>nothing applies without your tap</span>"
             f"</div>{rows}</div>")
@@ -493,6 +493,16 @@ def _promises_drawer(sx, tok) -> str:
             f"{len(proms)} staged by agent sessions</summary>{rows}</details>")
 
 
+def _drafts_link() -> str:
+    """A ↗ straight to where the sending actually happens (config [links]
+    mail_drafts) — the console tells you WHERE to go, not just what to do."""
+    url = (config.load().get("links") or {}).get("mail_drafts") or ""
+    if not url.startswith(("http://", "https://")):
+        return ""
+    return (f"<a class='btn small gray' href='{esc(url)}' target='_blank' "
+            f"rel='noopener'>↗ drafts</a>")
+
+
 def _do_now_stack(sx, st, tok) -> str:
     """THE surface: one money-ranked list of everything worth doing right now, each
     row DOable inline. Replaces the old pile of separate reply/due/send/call/leads/
@@ -506,15 +516,15 @@ def _do_now_stack(sx, st, tok) -> str:
         btns = draft + _f(tok, {"do": "reply", "rid": r["id"], "op": "handled"}, "✓ done", "btn small gray") \
             + _f(tok, {"do": "reply", "rid": r["id"], "op": "dismiss"}, "×", "btn small gray")
         sub = esc(r["subject"] or "") + (f" · “{esc((r['snippet'] or '')[:80])}”" if r["snippet"] else "")
-        items.append((100, _stack_row("REPLIED", "hot", f"{esc(who)} replied — call or answer",
-                                      f"{esc(r['venture'] or '')} · {sub}", btns)))
+        items.append((100, ("REPLIED", "hot", f"{esc(who)} replied — call or answer",
+                           f"{esc(r['venture'] or '')} · {sub}", btns)))
 
     # the operator's single top move
     if st.get("one_move"):
         btns = f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it</a>"
-        items.append((92, _stack_row("TOP MOVE", "go",
-                                     _linkify(esc(st["one_move"])) + " " + _src_pill(st),
-                                     "", btns)))
+        items.append((92, ("TOP MOVE", "go",
+                          _linkify(esc(st["one_move"])) + " " + _src_pill(st),
+                          "", btns)))
 
     # due follow-ups — the thread dies if you miss these
     for r in sx["due"]:
@@ -522,8 +532,8 @@ def _do_now_stack(sx, st, tok) -> str:
         btns = f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or ''))}'>▶</a>" \
             + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done") \
             + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
-        items.append((88, _stack_row("FOLLOW UP", "warn", f"Call {esc(r['target'])}",
-                                     f"{esc(r['venture'] or '')} · due {esc(r['due'])}", btns)))
+        items.append((88, ("FOLLOW UP", "warn", f"Call {esc(r['target'])}",
+                          f"{esc(r['venture'] or '')} · due {esc(r['due'])}", btns)))
 
     # aged/open leads — one summarized action, not 198 rows. Driven by the ops
     # ledger (the rows the button actually works), never the dashboard note.
@@ -540,7 +550,7 @@ def _do_now_stack(sx, st, tok) -> str:
         vk = max(set(vents), key=vents.count) if vents else ""
         btns = (f"<a class='btn small' href='/leads?status=open&sort=aged'>work them →</a>"
                 f"<a class='btn small gray' href='{esc(do_url(('Call the open leads newest first' + (f' for {vk}' if vk else '')), vk))}'>▶</a>")
-        items.append((84 if aged else 62, _stack_row(
+        items.append((84 if aged else 62, (
             "LEADS", "warn" if aged else "cool",
             f"{len(leads)} open leads — call newest first",
             (f"~{age}d since the last touch — paid-for money going cold" if aged
@@ -555,32 +565,33 @@ def _do_now_stack(sx, st, tok) -> str:
     for r in send:
         if "REPLIED" in (r["status"] or ""):
             btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
-            items.append((90, _stack_row("REPLIED", "hot",
-                                         f"{esc(r['target'])} replied — answer now",
-                                         f"{esc(r['channel'])} · {_linkify(esc(r['next'] or ''))}", btns)))
+            items.append((90, ("REPLIED", "hot",
+                               f"{esc(r['target'])} replied — answer now",
+                               f"{esc(r['channel'])} · {_linkify(esc(r['next'] or ''))}", btns)))
             continue
         routine_send.append(r)
     if len(routine_send) == 1:
         r = routine_send[0]
-        btns = f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
-        items.append((74, _stack_row("SEND", "go", f"Send → {esc(r['target'])}",
-                                     f"{esc(r['channel'])} · {_linkify(esc(r['next'] or 'day-3 call'))}", btns)))
+        btns = (f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
+                + _drafts_link())
+        items.append((74, ("SEND", "go", f"Send → {esc(r['target'])}",
+                          f"{esc(r['channel'])} · {_linkify(esc(r['next'] or 'day-3 call'))}", btns)))
     elif routine_send:
         inner = "".join(
             f"<div class='ar-sub'>▸ {esc(r['target'])} · {esc(r['channel'])} "
             f"<a href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a></div>"
             for r in routine_send)
-        items.append((74, _stack_row(
+        items.append((74, (
             "SEND", "go", f"{len(routine_send)} drafts ready — send them",
             f"<details><summary style='cursor:pointer'>every target, one tap each</summary>"
-            f"{inner}</details>", "")))
+            f"{inner}</details>", _drafts_link())))
     if len(call) == 1:
         r = call[0]
         m = PHONE.search(r["next"] or "")
         tel = (f"<a class='btn small' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>📞 {esc(m.group(0))}</a>"
                if m else f"<a class='btn small gray' href='{esc(do_url('Call ' + r['target']))}'>▶</a>")
-        items.append((70, _stack_row("CALL", "cool", f"Call {esc(r['target'])}",
-                                     _linkify(esc((r["next"] or "").split(',')[-1].strip()[:60])), tel)))
+        items.append((70, ("CALL", "cool", f"Call {esc(r['target'])}",
+                          _linkify(esc((r["next"] or "").split(',')[-1].strip()[:60])), tel)))
     elif call:
         inner = ""
         for r in call:
@@ -588,7 +599,7 @@ def _do_now_stack(sx, st, tok) -> str:
             tel = (f"<a class='tel' href='tel:{re.sub(r'[^0-9]', '', m.group(0))}'>📞 {esc(m.group(0))}</a>"
                    if m else "")
             inner += f"<div class='ar-sub'>▸ {esc(r['target'])} {tel}</div>"
-        items.append((70, _stack_row(
+        items.append((70, (
             "CALL", "cool", f"{len(call)} calls to make — 20 minutes, phone first",
             f"<details><summary style='cursor:pointer'>every number, tap to dial</summary>"
             f"{inner}</details>", "")))
@@ -601,24 +612,31 @@ def _do_now_stack(sx, st, tok) -> str:
         btns = f"<a class='btn small gray' href='{esc(do_url(p['text'], p['venture'] or ''))}'>▶ do it</a>" \
             + _f(tok, {"do": "promise", "pid": p["id"], "op": "done"}, "✓", "btn small gray") \
             + _f(tok, {"do": "promise", "pid": p["id"], "op": "dismiss"}, "×", "btn small gray")
-        items.append((56, _stack_row("STAGED", "dim", _linkify(esc(p["text"][:160])),
-                                     esc(p["venture"] or ""), btns)))
+        items.append((56, ("STAGED", "dim", _linkify(esc(p["text"][:160])),
+                          esc(p["venture"] or ""), btns)))
 
     items.sort(key=lambda x: -x[0])
     if not items:
         return ("<div class='card'><h3>Nothing queued — you're clear</h3>"
                 "<p class='hint'>Log a touch or drop a lead below, or let the next sync surface "
                 "replies, follow-ups, and staged work.</p></div>")
-    # above the fold: 7 rows max. The tail folds — ranked means the top IS the job.
-    head_items, tail_items = items[:7], items[7:]
-    rows = "".join(h for _, h in head_items)
+    # THE answer to "what do I do right now": the top-ranked item, writ large.
+    # One glance, one action — everything else is a list below it.
+    tag, tagcls, title, sub, btns = items[0][1]
+    hero = (f"<div class='next-move'><small>NEXT MOVE · <span class='{tagcls}'>"
+            f"{esc(tag)}</span></small><p>{title}</p>"
+            + (f"<div class='nm-sub'>{sub}</div>" if sub else "")
+            + (f"<div class='nm-acts'>{btns}</div>" if btns else "") + "</div>")
+    # above the fold: the hero + 6 rows. The tail folds — ranked means the top IS the job.
+    head_items, tail_items = items[1:7], items[7:]
+    rows = "".join(_stack_row(*t) for _, t in head_items)
     if tail_items:
         rows += (f"<details><summary class='hint' style='padding:9px 16px;cursor:pointer'>"
                  f"+{len(tail_items)} more ranked below</summary>"
-                 + "".join(h for _, h in tail_items) + "</details>")
-    return (f"<div class='card action stack'><div class='cardhead'>"
+                 + "".join(_stack_row(*t) for _, t in tail_items) + "</details>")
+    return (f"<div class='card action stack' id='donow'><div class='cardhead'>"
             f"<h3>▶ DO NOW</h3><span class='meta'>{len(items)} ranked · most money "
-            f"first</span></div>{rows}</div>")
+            f"first</span></div>{hero}{rows}</div>")
 
 
 def _venture_of(r):
@@ -694,8 +712,8 @@ def _serve_now_block(sx, st) -> str:
         f"<tr><td>{esc(c['text'])}</td><td class='acts'>"
         + _f(tok, {"do": "capture_set", "cid": c["id"], "op": "file"}, "filed", "btn small gray")
         + "</td></tr>" for c in sx["captures"])
-    cap_html = (f"<div class='card'><div class='cardhead'><h3>📥 INBOX — {len(sx['captures'])} captured"
-                f"</h3></div><table>{cap_rows}</table></div>" if sx["captures"] else "")
+    cap_html = (f"<details class='card'><summary>📥 INBOX — {len(sx['captures'])} captured"
+                f"</summary><table>{cap_rows}</table></details>" if sx["captures"] else "")
     leads_html = _hot_lanes(sx, tok)
     return stack + quick + cap_html + leads_html + _promises_drawer(sx, tok)
 
@@ -999,7 +1017,12 @@ def _lead_row(tok, r, today) -> str:
                f"due {esc(r['next_due'])}</span>")
     what = esc((r["intent"] if "intent" in r.keys() else "") or r["service"] or "")
     acts = f"<td class='acts'>{_lead_actions(tok, r)}</td>" if tok else ""
-    return (f"<tr><td><b>{esc(_lead_title(r))}</b>{src_pill}{due}<br>"
+    # the lead's source URL (importer-provided) — go straight to where it lives
+    ext = ""
+    if "link" in r.keys() and (r["link"] or "").startswith(("http://", "https://")):
+        ext = (f" <a href='{esc(r['link'])}' target='_blank' rel='noopener' "
+               f"title='open the lead at its source'>↗</a>")
+    return (f"<tr><td><b>{esc(_lead_title(r))}</b>{src_pill}{due}{ext}<br>"
             f"<small>{_linkify(esc(r['phone'] or ''))}"
             f"{' · ' + what if what else ''}{quoted}{won}</small></td>"
             f"<td style='white-space:nowrap' class='{tempcls}'>~{age}d</td>{acts}</tr>")
@@ -1139,6 +1162,34 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
                         (f"{n:,} B" if n < 4096 else f"{n / 1024:.1f} KB"))
         return f" <span class='hint'>{' · '.join(bits)}</span>" if bits else ""
 
+    # HOW IT RUNS — the answer to "where does this actually go?", in-product.
+    agent_cfg = config.load().get("agent", {})
+    acmd = [str(c) for c in (agent_cfg.get("command") or ["claude", "-p"])]
+    exe = _dispatch._resolve_exe(acmd[0])
+    mode = agent_cfg.get("input", "argv")
+    tmin = agent_cfg.get("timeout_minutes", 30)
+    runline = esc(" ".join(acmd)) + (" \"&lt;the brief&gt;\"" if mode == "argv"
+                                     else " &lt; the brief (stdin)")
+    how_panel = f"""<details class="card"><summary>⚙ HOW DISPATCH RUNS —
+<code>{esc(exe)}</code> · a local process, not the desktop app</summary>
+<table style="margin-top:8px">
+<tr><th>runs</th><td><code>{runline}</code>{'' if agent_on else
+    " <span class='pill warn'>launch disabled — briefs only</span>"}</td></tr>
+<tr><th>what it is</th><td>your <code>[agent] command</code> from config — on this
+machine the Claude Code CLI, the same <code>claude</code> as your terminal, run
+headless. It is <b>not</b> the Claude desktop app, and opsroom itself never
+touches the network — the CLI talks to its own account exactly like a terminal
+session.</td></tr>
+<tr><th>lifecycle</th><td>detached from the console (a restart never kills a
+run) · exit / duration / output size recorded in the runs ledger · watchdog
+kills anything past {esc(str(tmin))}m · the advisor retries once on a 0-byte
+death</td></tr>
+<tr><th>output</th><td><code>~/.local/share/opsroom/dispatch/&lt;ts&gt;.log</code>
+{_f(token, {"do": "reveal", "what": "data"}, "📂 reveal folder", "btn small gray")}</td></tr>
+<tr><th>config</th><td><code>~/.config/opsroom/config.toml</code>
+{_f(token, {"do": "reveal", "what": "config"}, "📂 reveal", "btn small gray")}</td></tr>
+</table></details>"""
+
     any_running = False
     live_ts = launched_ts if live_status == "running" else ""
     hist_rows = []
@@ -1150,6 +1201,8 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
         cancel_btn = (_f(token, {"do": "dispatch_cancel", "ts": h["tsid"],
                                  "back": "/do"}, "✕ cancel", "btn small gray",
                         confirm="Cancel this agent run?") if running_row else "")
+        reveal_btn = (_f(token, {"do": "reveal", "what": "log", "ts": h["tsid"]},
+                         "📂", "btn small gray") if h["log"] else "")
         # the followed run always gets a real (possibly empty) <pre> so the live
         # tail has somewhere to grow — 'no output yet' used to hide a dying run
         openattr = " open" if (h["tsid"] == launched_ts or running_row) else ""
@@ -1163,7 +1216,7 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
         hist_rows.append(
             f"<tr><td style='white-space:nowrap'>{esc(h['ts'])}</td>"
             f"<td>{_chip(h['status'], h['tsid'])}{_accounting(h)}</td>"
-            f"<td><b>{esc(h['task'][:90])}</b> {cancel_btn}{tail_html}</td></tr>")
+            f"<td><b>{esc(h['task'][:90])}</b> {cancel_btn}{reveal_btn}{tail_html}</td></tr>")
     hist = (f"<div class='card'><label>recent dispatches — live status</label>"
             f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{''.join(hist_rows)}</table></div>"
             if hist_rows else "")
@@ -1197,6 +1250,7 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
 <button class="btn gray" onclick="cp()" id="cpbtn">⧉ copy brief</button>
 {send_btn}
 </div>
+{how_panel}
 {hist}
 <script>
 function cp(){{var t=document.getElementById('out');t.select();
@@ -1550,6 +1604,15 @@ def _palette_data(sx, st) -> str:
     if sx.get("agent_on"):
         items.append({"label": "🧠 ask the board a question",
                       "kind": "focus", "sel": "input[name=question]"})
+    items += [
+        {"label": "▶ jump to DO NOW", "kind": "focus", "sel": "#donow"},
+        {"label": "🤖 jump to proposals", "kind": "focus", "sel": "#proposals"},
+        {"label": "📇 jump to the hot lanes", "kind": "focus", "sel": "#lanes"},
+        {"label": "📂 reveal the config file (Finder)", "kind": "post",
+         "fields": {"do": "reveal", "what": "config"}},
+        {"label": "📂 reveal dispatch logs (Finder)", "kind": "post",
+         "fields": {"do": "reveal", "what": "data"}},
+    ]
     if st.get("one_move"):
         items.append({"label": f"▶ dispatch the top move — {st['one_move'][:60]}",
                       "kind": "link", "href": do_url(st["one_move"])})
@@ -1955,6 +2018,16 @@ details.more[open]>summary{{color:var(--go);border-color:var(--go-line)}}
   font:600 12.5px var(--sans);letter-spacing:.04em;margin-bottom:2px}}
 .lane-head>a:first-child{{color:var(--ink);text-decoration:none}}
 .lane-head>a:first-child:hover{{color:var(--go)}}
+
+/* NEXT MOVE — the top-ranked action, writ large inside DO NOW */
+.next-move{{position:relative;margin:2px 12px 10px;padding:14px 16px;border-radius:11px;
+  background:radial-gradient(120% 160% at 0% 0%, var(--go-dim), transparent 55%),var(--bg2);
+  border:1px solid var(--go-line)}}
+.next-move small{{font:700 10px/1 var(--mono);letter-spacing:.14em;color:var(--go)}}
+.next-move p{{margin:7px 0 0;font-size:17px;line-height:1.4;color:var(--ink);
+  font-weight:600;text-wrap:balance}}
+.next-move .nm-sub{{color:var(--dim);font-size:13px;margin-top:3px}}
+.next-move .nm-acts{{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px}}
 
 /* NOW hero — the one move */
 .hero{{position:relative;background:
