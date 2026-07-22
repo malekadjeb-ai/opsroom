@@ -124,6 +124,7 @@ def _page(search_q=None) -> bytes:
             "due": ops.followups_due(ocon), "upcoming": ops.followups_upcoming(ocon),
             "cash_total": ops.cash_total(ocon), "cash_entries": ops.cash_entries(ocon),
             "leads": ops.leads_open(ocon), "lead_stages": ops.leads_stage_counts(ocon),
+            "lanes": ops.leads_lanes(ocon),
             "tape": ops.today_tape(ocon),
             "advise_error": ops.kv_get(ocon, "advise_error", ""),
             "touches": ops.touches_recent(ocon, 12),

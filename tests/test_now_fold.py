@@ -89,8 +89,8 @@ def main():
             "pace strip must absorb the tape"
         assert "<div class='tape'>" not in page, "the separate tape strip must be gone"
 
-        # nav: LEADS and ADVISOR are first-class
-        assert 'href="/leads">📇 LEADS' in page and 'href="/counsel">🧠 ADVISOR' in page
+        # nav: the BOARD and ADVISOR are first-class
+        assert 'href="/leads">📇 BOARD' in page and 'href="/counsel">🧠 ADVISOR' in page
     print("now-fold gate: one banner, ≤7 rows above the fold, chatter in the drawer, "
           "money promises rank, one pace surface, first-class nav")
     return 0

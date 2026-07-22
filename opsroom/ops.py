@@ -210,8 +210,10 @@ def add_lead(con, name: str, phone: str = "", service: str = "", note: str = "",
                               stage, source, intent, first_seen, link, next_due, status)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (_now(), name, phone, service, redact.scrub(note), venture,
-         stage, source, intent or service, first_seen or _now()[:10], link, next_due,
-         _STAGE_TO_STATUS[stage]))
+         # first_seen is an operator-facing calendar fact: LOCAL date, never the
+         # UTC prefix (11pm adds used to read "first seen tomorrow")
+         stage, source, intent or service, first_seen or _today().isoformat(),
+         link, next_due, _STAGE_TO_STATUS[stage]))
     con.commit()
     return cur.lastrowid
 
@@ -405,6 +407,57 @@ def leads_stage_counts(con) -> dict:
             out[r["s"]] += r["c"]
         out["all"] += r["c"]
     return out
+
+
+QUOTED_COLD_DAYS = 3  # a quote untouched this long is cooling; day 7 is dead
+
+
+def _local_date(val: str) -> str:
+    """A stored value's LOCAL calendar date. Rows store UTC iso timestamps, so
+    a lead added at 11pm local is 'tomorrow' in UTC — comparing raw prefixes
+    would hide it from every today lane. Bare dates pass through."""
+    if not val:
+        return ""
+    if len(val) > 10:
+        try:
+            return datetime.fromisoformat(val).astimezone().date().isoformat()
+        except ValueError:
+            pass
+    return val[:10]
+
+
+def leads_lanes(con, cap: int = 5) -> dict:
+    """The pipeline's HOT lanes for the NOW board — the four states that demand
+    action today, straight from the ledger. A lead lands in its hottest lane
+    only (replied > due > new > cold), so nothing double-counts:
+      replied — stage 'talking': a live two-way thread, answer it today
+      due     — next_due today or overdue
+      new     — first seen today (speed-to-lead)
+      cold    — quoted but untouched for QUOTED_COLD_DAYS+
+    Each lane: {"rows": [...cap], "n": total}. Computed in Python over the open
+    set so UTC-stored timestamps compare on LOCAL dates."""
+    rows = leads_open(con)  # already newest-touch first
+    today = _today().isoformat()
+    cold_edge = (_today() - timedelta(days=QUOTED_COLD_DAYS)).isoformat()
+    lanes, seen = {}, set()
+
+    def take(key, hits, sort_key=None):
+        hits = [r for r in hits if r["id"] not in seen]
+        seen.update(r["id"] for r in hits)
+        if sort_key:
+            hits.sort(key=sort_key)
+        lanes[key] = {"rows": hits[:cap], "n": len(hits)}
+
+    take("replied", [r for r in rows if r["stage"] == "talking"])
+    take("due", [r for r in rows
+                 if r["next_due"] and _local_date(r["next_due"]) <= today],
+         sort_key=lambda r: r["next_due"])
+    take("new", [r for r in rows
+                 if _local_date(r["first_seen"] or r["added"]) == today])
+    take("cold", [r for r in rows if r["stage"] == "quoted"
+                  and _local_date(r["last_touch"] or r["added"]) <= cold_edge],
+         sort_key=lambda r: -(r["quoted"] or 0))
+    return lanes
 
 
 def lead_get(con, lead_id: int):

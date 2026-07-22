@@ -644,23 +644,53 @@ def _serve_now_block(sx, st) -> str:
         + "</td></tr>" for c in sx["captures"])
     cap_html = (f"<div class='card'><div class='cardhead'><h3>📥 INBOX — {len(sx['captures'])} captured"
                 f"</h3></div><table>{cap_rows}</table></div>" if sx["captures"] else "")
-    today = datetime.now().astimezone().date()
-    lead_rows = "".join(_lead_row(tok, r, today) for r in sx["leads"][:5])
-    n_leads = len(sx["leads"])
-    stage_chips = ""
-    if sx.get("lead_stages"):
-        sc = sx["lead_stages"]
-        stage_chips = " · ".join(f"{s} {sc.get(s, 0)}" for s in
-                                 ("new", "contacted", "talking", "quoted") if sc.get(s))
-        stage_chips = f" · {stage_chips}" if stage_chips else ""
-    more = (f"<p class='hint'>the 5 hottest of {n_leads} — "
-            f"<a href='/leads'>open the pipeline →</a></p>" if n_leads > 5 else
-            f"<p class='hint'><a href='/leads'>open the pipeline →</a></p>")
-    leads_html = (f"<details class='card' id='leadwork'><summary>📇 LEADS worklist — "
-                  f"{n_leads} open{stage_chips} · "
-                  f"<a href='/leads'>full pipeline →</a></summary>"
-                  f"<table>{lead_rows}</table>{more}</details>" if sx["leads"] else "")
+    leads_html = _hot_lanes(sx, tok)
     return stack + quick + cap_html + leads_html + _promises_drawer(sx, tok)
+
+
+# lane key -> (chip, why-it's-hot, board link) — same row grammar as the board
+_LANE_DEFS = (
+    ("replied", "🔥 REPLIED", "a live thread — answer today", "/leads?stage=talking"),
+    ("due", "⏰ DUE TODAY", "the cadence says now", "/leads"),
+    ("new", "✨ NEW TODAY", "speed-to-lead wins", "/leads?stage=new"),
+    ("cold", "🧊 QUOTED, GOING COLD", "untouched 3+ days — quotes decay",
+     "/leads?stage=quoted&sort=quoted"),
+)
+
+
+def _hot_lanes(sx, tok) -> str:
+    """The pipeline's hot lanes ON the NOW board: the daily lead loop without
+    leaving the page. Same `_lead_row` renderer as the full board — one visual
+    grammar, inline actions and all; the BOARD stays one level down for deep
+    sessions. Every count here is a ledger fact (ops.leads_lanes)."""
+    lanes = sx.get("lanes") or {}
+    n_leads = len(sx.get("leads") or [])
+    today = datetime.now().astimezone().date()
+    hot = sum(lanes.get(k, {}).get("n", 0) for k, *_ in _LANE_DEFS)
+    if not n_leads:
+        return ""
+    board_link = f"<a href='/leads'>full board — {n_leads} open →</a>"
+    if not hot:
+        return (f"<div class='card'><div class='cardhead'><h3>📇 PIPELINE — "
+                f"nothing hot right now</h3></div><p class='hint'>No replies "
+                f"waiting, nothing due, nothing new, no quote going cold. "
+                f"{board_link}</p></div>")
+    secs = ""
+    for key, chip, why, href in _LANE_DEFS:
+        lane = lanes.get(key) or {}
+        rows = lane.get("rows") or []
+        if not rows:
+            continue
+        n = lane.get("n", len(rows))
+        more = (f" <a class='hint' href='{href}'>all {n} →</a>"
+                if n > len(rows) else "")
+        secs += (f"<div class='lane'><div class='lane-head'>"
+                 f"<a href='{href}'>{chip} · {n}</a>"
+                 f"<span class='hint'>{esc(why)}</span>{more}</div>"
+                 f"<table>{''.join(_lead_row(tok, r, today) for r in rows)}</table></div>")
+    return (f"<div class='card' id='lanes'><div class='cardhead'>"
+            f"<h3>📇 PIPELINE — {hot} hot</h3><span>{board_link}</span></div>"
+            f"{secs}</div>")
 
 
 def draft_url(venture: str, name: str = "", msg: str = "") -> str:
@@ -723,18 +753,46 @@ select.stg{width:auto;padding:4px 6px;font-size:12px}
   border-radius:8px;text-decoration:none}
 .subnav a:hover{color:var(--ink);background:var(--surface)}
 .subnav a.on{color:var(--go);background:var(--go-dim);border-color:var(--go-line)}
+.subnav a.minor{opacity:.72}
 """
 
-# every workspace page shares one nav — the product stops hiding behind buried links
-NAV_ITEMS = (("now", "🎯 NOW", "/#now"), ("leads", "📇 LEADS", "/leads"),
-             ("money", "💰 MONEY", "/#money"), ("advisor", "🧠 ADVISOR", "/counsel"),
-             ("ventures", "🏢 VENTURES", "/#ventures"))
+# ONE nav definition for the whole product: four primaries, two minor panels.
+# The main console header AND every workspace page render from this tuple —
+# a label change lands everywhere or nowhere. target '#x' = a console hash
+# panel (data-t routes it); '/x' = a full page.
+NAV_ITEMS = (
+    ("now", "🎯 NOW", "#now", False),
+    ("board", "📇 BOARD", "/leads", False),
+    ("money", "💰 MONEY", "#money", False),
+    ("advisor", "🧠 ADVISOR", "/counsel", False),
+    ("ventures", "🏢", "#ventures", True),
+    ("activity", "📊", "#activity", True),
+)
+_NAV_TITLES = {"ventures": "ventures", "activity": "engineering activity"}
 
 
 def _subnav(active: str) -> str:
-    return "<div class='subnav'>" + "".join(
-        f"<a{' class=on' if key == active else ''} href='{href}'>{label}</a>"
-        for key, label, href in NAV_ITEMS) + "</div>"
+    out = []
+    for key, label, target, minor in NAV_ITEMS:
+        href = "/" + target if target.startswith("#") else target
+        cls = ("on " if key == active else "") + ("minor" if minor else "")
+        title = f" title='{_NAV_TITLES[key]}'" if minor else ""
+        out.append(f"<a{f' class={chr(34)}{cls.strip()}{chr(34)}' if cls.strip() else ''}"
+                   f" href='{href}'{title}>{label}</a>")
+    return "<div class='subnav'>" + "".join(out) + "</div>"
+
+
+def _main_nav() -> str:
+    """The console header nav, from the same NAV_ITEMS as every subpage."""
+    out = []
+    for key, label, target, minor in NAV_ITEMS:
+        cls = " class=\"minor\"" if minor else ""
+        title = f" title=\"{_NAV_TITLES[key]}\"" if minor else ""
+        if target.startswith("#"):
+            out.append(f'<a data-t="{key}" href="{target}"{cls}{title}>{label}</a>')
+        else:
+            out.append(f'<a href="{target}"{cls}{title}>{label}</a>')
+    return "<nav>\n    " + "\n    ".join(out) + "\n  </nav>"
 
 
 def _chrome(title: str, body: str, active: str = "", extra_css: str = "",
@@ -940,7 +998,7 @@ board first — each ▶ dispatches an agent with this lead's full context baked
 <button class="btn small" style="flex:0">filter</button></form>
 <div class="chips">{chips}</div>
 {board}"""
-    return _chrome("PIPELINE", body, active="leads", wide=True)
+    return _chrome("PIPELINE", body, active="board", wide=True)
 
 
 def do_page(token, task, venture, brief, agent_on, result=None, history=None,
@@ -1653,6 +1711,13 @@ main{{max-width:920px;margin:18px auto;padding:0 18px}}
 .cardhead{{display:flex;justify-content:space-between;align-items:center;gap:10px;
   flex-wrap:wrap;margin-bottom:9px}}
 
+/* pipeline hot lanes on NOW */
+.lane{{margin-top:12px}}
+.lane-head{{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+  font:600 12.5px var(--sans);letter-spacing:.04em;margin-bottom:2px}}
+.lane-head>a:first-child{{color:var(--ink);text-decoration:none}}
+.lane-head>a:first-child:hover{{color:var(--go)}}
+
 /* NOW hero — the one move */
 .hero{{position:relative;background:
     radial-gradient(90% 120% at 0% 0%, var(--go-dim), transparent 55%),var(--surface);
@@ -1856,14 +1921,7 @@ footer b{{color:var(--dim)}}
   <div class="brand"><h1><span class="bolt">⚡</span> OPERATOR</h1><time>{today.isoformat()}</time>{ctx_btn}</div>
   {head_stats}
   {qbox}
-  <nav>
-    <a data-t="now" href="#now">🎯 NOW</a>
-    <a href="/leads">📇 LEADS</a>
-    <a data-t="money" href="#money">💰 MONEY</a>
-    <a href="/counsel">🧠 ADVISOR</a>
-    <a data-t="ventures" href="#ventures">🏢 VENTURES</a>
-    <a data-t="activity" href="#activity" class="minor" title="engineering activity">📊</a>
-  </nav>
+  {_main_nav()}
 </header>
 <main>
 <div class="panel" id="now">{now_tab}</div>

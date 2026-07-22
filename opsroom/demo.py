@@ -141,7 +141,7 @@ def run(serve_console: bool = True):
         d.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now(timezone.utc)
-    today = now.date()
+    today = datetime.now().astimezone().date()  # operator dates are LOCAL dates
     deadline = today + timedelta(days=23)
     (demo_root / "config" / "config.toml").write_text(
         CONFIG.format(deadline=deadline.isoformat(), notes=notes, pipes=pipes))
@@ -235,6 +235,15 @@ def run(serve_console: bool = True):
                 quoted_id = lid
         if quoted_id:
             ops.touch_lead(oc, quoted_id, "quoted", 380, "held the $189 interior price")
+            # the quote is 4 days untouched: the QUOTED-going-cold lane has teeth
+            oc.execute("UPDATE leads SET added=?, first_seen=?, last_touch=? WHERE id=?",
+                       ((now - timedelta(days=5)).isoformat(),
+                        (today - timedelta(days=5)).isoformat(),
+                        (now - timedelta(days=4)).isoformat(), quoted_id))
+        # Rowan asked for a Saturday slot — the cadence says call TODAY (due lane)
+        oc.execute("UPDATE leads SET next_due=? WHERE name='Rowan Marsh'",
+                   (today.isoformat(),))
+        oc.commit()
         fid = ops.log_touch(oc, "meridian", "Summit Fabrication (Chris Vale)",
                             "called", "left a voicemail with Chris")
         if fid:
@@ -272,7 +281,8 @@ def run(serve_console: bool = True):
         ops.touch_lead(oc, lost1, "lost")
         for lid, days_old in aged:  # backdate so the aged sort shows real decay
             back = (now - timedelta(days=days_old)).isoformat()
-            oc.execute("UPDATE leads SET added=?, last_touch=NULL WHERE id=?", (back, lid))
+            oc.execute("UPDATE leads SET added=?, first_seen=?, last_touch=NULL "
+                       "WHERE id=?", (back, back[:10], lid))
         oc.commit()
 
         # ---- the OPERATOR LOOP, pre-loaded: a finished agent run whose output

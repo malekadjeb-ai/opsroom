@@ -34,7 +34,10 @@ def main():
         port = httpd.server_address[1]
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         live = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5).read().decode()
-        for needle in ("DO NOW", "$8,250", "Dana Reyes", "LEADS worklist — 11 open",
+        for needle in ("DO NOW", "$8,250", "Dana Reyes",
+                       # the pipeline's hot lanes live ON the NOW board (v0.12)
+                       "PIPELINE — 5 hot", "REPLIED · 1", "DUE TODAY · 1",
+                       "NEW TODAY · 2", "GOING COLD · 1", "full board — 11 open",
                        "TODAY'S PACE", "Summit Fabrication",
                        # the operator loop, pre-loaded: a finished agent run's
                        # output staged as pending one-tap proposals
