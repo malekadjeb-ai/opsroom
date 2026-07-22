@@ -173,7 +173,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", CSP)
         self.send_header("X-Frame-Options", "DENY")  # a framed console = clickjackable writes
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # same-origin, NOT no-referrer: under no-referrer Chrome sends
+        # `Origin: null` on same-origin form POSTs, which the same-origin gate
+        # rightly rejects — i.e. every button in a real browser died with a
+        # misleading "bad token". The referrer still never leaves this
+        # loopback origin; only the Origin header becomes truthful again.
+        self.send_header("Referrer-Policy", "same-origin")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -333,8 +338,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         form = {k: v[0] for k, v in
                 urllib.parse.parse_qs(self.rfile.read(length).decode()).items()}
-        if not self._same_origin() or not secrets.compare_digest(
-                form.get("token", ""), TOKEN):
+        # two distinct refusals, named honestly — an origin failure spent days
+        # masquerading as "bad token" and pointing everyone at the wrong fix
+        if not self._same_origin():
+            self._send(403, b"cross-origin write blocked")
+            return
+        if not secrets.compare_digest(form.get("token", ""), TOKEN):
             self._send(403, b"bad token - reload the page")
             return
         ocon = ops.connect()
