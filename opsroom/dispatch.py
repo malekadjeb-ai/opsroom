@@ -333,6 +333,42 @@ def _status_from_row(row) -> str:
     return ""  # running/orphaned/unknown: let the live checks decide
 
 
+def cancel(ts: str) -> bool:
+    """Operator cancel. Records 'cancelled' FIRST (the reaper never downgrades
+    it), then signals: this boot's runs get a group SIGTERM with a SIGKILL
+    escalation thread; cross-boot runs get a best-effort pid-file SIGTERM —
+    and ONLY while our own .pid file vouches for the number (pid-reuse guard)."""
+    if not TS_RE.match(ts or ""):
+        return False
+    try:
+        ocon = ops.connect()
+        try:
+            marked = runs.mark_cancelled(ocon, ts)
+        finally:
+            ocon.close()
+    except Exception:
+        marked = False
+    p = _PROCS.get(ts)
+    if p is not None and p.poll() is None:
+        _killpg(p, signal.SIGTERM)
+
+        def _escalate():
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _killpg(p, signal.SIGKILL)
+        threading.Thread(target=_escalate, daemon=True).start()
+        return True
+    pidf = config.data_dir() / "dispatch" / f"{ts}.pid"
+    if pidf.is_file():
+        try:
+            os.kill(int(pidf.read_text().strip()), signal.SIGTERM)
+            return True
+        except (ValueError, OSError):
+            pass
+    return marked
+
+
 def status(ts: str) -> str:
     """'' (brief only) · 'running' · 'done' · 'exit N' · 'killed (timeout)' ·
     'cancelled'. Works across console restarts: this boot's Popen first, then

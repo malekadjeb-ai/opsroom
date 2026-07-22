@@ -140,6 +140,20 @@ def ack(ocon, ts: str) -> None:
     ocon.commit()
 
 
+def mark_cancelled(ocon, ts: str) -> bool:
+    """Operator cancel, recorded BEFORE the kill signal so the reaper's
+    record_exit (which never downgrades this) can't turn it into 'exit -15'."""
+    if not TS_RE.match(ts or ""):
+        return False
+    _ensure(ocon)
+    ocon.execute("INSERT OR IGNORE INTO runs (ts, started, outcome)"
+                 " VALUES (?,?,'running')", (ts, _now()))
+    cur = ocon.execute("UPDATE runs SET outcome='cancelled', ended=?"
+                       " WHERE ts=? AND outcome='running'", (_now(), ts))
+    ocon.commit()
+    return cur.rowcount > 0
+
+
 def _pid_alive(pid) -> bool:
     if not pid:
         return False

@@ -229,9 +229,11 @@ def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
         return ""
     chips = ""
     for d in dispatches[:4]:
+        stop = _f(token, {"do": "dispatch_cancel", "ts": d["ts"]}, "✕",
+                  "btn small gray", confirm="Cancel this agent run?") if token else ""
         chips += (f"<a class='sess cowork busy' href='{esc(do_url(d['task'][:200]))}"
                   f"&launched={esc(d['ts'])}' style='text-decoration:none'>"
-                  f"<b>🤖 dispatched</b><span>{esc(d['task'][:60]) or 'brief'} · running</span></a>")
+                  f"<b>🤖 dispatched</b><span>{esc(d['task'][:60]) or 'brief'} · running</span></a>{stop}")
     for qd in queued[:4]:
         import json as _json
         try:
@@ -359,10 +361,36 @@ _MONEY_VERB = re.compile(
     r"(?i)\b(send|call|text|email|invoice|quote|collect|follow.?up|reply|book|close)\b")
 
 
+def _run_fail_alert(row, tok) -> tuple:
+    """A dead/failed/killed agent run as a ranked alert. The whole point of the
+    runs ledger: a silent 0-byte night now turns the console red."""
+    ts = row["ts"]
+    when = ts[9:11] + ":" + ts[11:13] if len(ts) >= 13 else ts
+    try:
+        when = datetime.strptime(ts[:15], "%Y%m%d-%H%M%S").replace(
+            tzinfo=timezone.utc).astimezone().strftime("%H:%M")
+    except ValueError:
+        pass
+    task = (row["task"] or "agent run")[:60]
+    if row["outcome"] == "killed":
+        sev, what = 105, "watchdog killed it (over the [agent] timeout)"
+    elif row["outcome"] == "dead":
+        sev, what = 110, ("died with 0 bytes of output"
+                          + (f" (exit {row['exit_code']})"
+                             if row["exit_code"] is not None else ""))
+    else:
+        sev, what = 110, f"exited {row['exit_code']}"
+    return (sev, f"🤖 agent run {esc(when)} — <b>{esc(task)}</b> — {esc(what)} "
+                 f"<a href='/do?launched={esc(ts)}'>log →</a>"
+            + _f(tok, {"do": "run_ack", "ts": ts}, "dismiss", "btn small gray"))
+
+
 def _alert_slot(sx, st, tok) -> str:
     """ONE banner. Alerts ranked by severity; the winner renders, the rest fold
     into a '+N more' disclosure instead of stacking red bars down the page."""
     alerts = []  # (severity, html) — higher first
+    for row in (sx.get("run_failures") or [])[:3]:
+        alerts.append(_run_fail_alert(row, tok))
     if sx.get("advise_error"):
         alerts.append((100, f"🧠 the advisor hit an error last run — "
                             f"<code>{esc(sx['advise_error'][:160])}</code> "
@@ -928,9 +956,12 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
             banner = (f"<div class='card' style='border-color:var(--go-line)'>"
                       f"<b style='color:var(--go)'>✓ agent finished.</b> "
                       f"Its output is in the history below.</div>")
-        elif live_status.startswith("exit"):
-            banner = (f"<div class='card'><b>⚠ agent ended with {esc(live_status)}.</b> "
+        elif live_status.startswith(("exit", "killed", "died")):
+            banner = (f"<div class='card'><b>⚠ agent ended: {esc(live_status)}.</b> "
                       f"The log tail below has the details.</div>")
+        elif live_status == "cancelled":
+            banner = (f"<div class='card'><b>✕ run cancelled.</b> "
+                      f"Whatever it printed first is in the history below.</div>")
         else:
             banner = (f"<div class='card'><b>Brief written.</b> Agent launch is "
                       f"disabled — copy the brief into any AI, or enable one-tap "
@@ -948,39 +979,79 @@ def do_page(token, task, venture, brief, agent_on, result=None, history=None,
 <input type="hidden" name="task" value="{esc(task)}"><input type="hidden" name="venture" value="{esc(venture)}">
 {f'<input type="hidden" name="lead" value="{int(lead)}">' if lead else ''}
 <button class="btn gray">⏳ queue it — runs after the current agent</button></form>"""
-    def _chip(s):
+    def _chip(s, tsid=""):
+        idattr = f" id='chip-{esc(tsid)}'" if tsid else ""
         if s == "running":
-            return "<span class='pill' style='color:var(--go)'>● running</span>"
+            return f"<span class='pill'{idattr} style='color:var(--go)'>● running</span>"
         if s == "done":
-            return "<span class='pill'>✓ done</span>"
-        if s.startswith("exit"):
-            return f"<span class='pill' style='color:var(--leak)'>⚠ {esc(s)}</span>"
-        return "<span class='pill'>brief only</span>"
+            return f"<span class='pill'{idattr}>✓ done</span>"
+        if s == "cancelled":
+            return f"<span class='pill'{idattr}>✕ cancelled</span>"
+        if s.startswith(("exit", "killed", "died")):
+            return f"<span class='pill'{idattr} style='color:var(--leak)'>⚠ {esc(s)}</span>"
+        return f"<span class='pill'{idattr}>brief only</span>"
+
+    def _accounting(h) -> str:
+        """The runs-ledger receipt: duration + output size. A run without one is
+        a pre-0.12 relic; a run with '0 bytes' is the old silent-death, now loud."""
+        bits = []
+        if h.get("duration_s") is not None:
+            d = h["duration_s"]
+            bits.append(f"{d:.0f}s" if d < 90 else f"{d / 60:.1f}m")
+        if h.get("stdout_bytes") is not None:
+            n = h["stdout_bytes"]
+            bits.append("0 bytes" if n == 0 else
+                        (f"{n:,} B" if n < 4096 else f"{n / 1024:.1f} KB"))
+        return f" <span class='hint'>{' · '.join(bits)}</span>" if bits else ""
 
     any_running = False
+    live_ts = launched_ts if live_status == "running" else ""
     hist_rows = []
     for h in (history or []):
         running_row = h["status"] == "running"
         any_running = any_running or running_row
-        tail_html = ""
-        if h["tail"]:
-            # the freshest run stays expanded so a live tail reads like a terminal
-            openattr = " open" if (h["tsid"] == launched_ts or running_row) else ""
+        if running_row and not live_ts:
+            live_ts = h["tsid"]
+        cancel_btn = (_f(token, {"do": "dispatch_cancel", "ts": h["tsid"],
+                                 "back": "/do"}, "✕ cancel", "btn small gray",
+                        confirm="Cancel this agent run?") if running_row else "")
+        # the followed run always gets a real (possibly empty) <pre> so the live
+        # tail has somewhere to grow — 'no output yet' used to hide a dying run
+        openattr = " open" if (h["tsid"] == launched_ts or running_row) else ""
+        if h["tail"] or running_row:
             tail_html = (f"<details{openattr}><summary>log tail</summary>"
-                         f"<pre style='white-space:pre-wrap;font-size:12px;color:var(--dim);"
-                         f"max-height:260px;overflow:auto'>{esc(h['tail'])}</pre></details>")
-        elif h["status"] == "running":
-            tail_html = "<p class='hint'>no output yet…</p>"
+                         f"<pre id='tail-{esc(h['tsid'])}' style='white-space:pre-wrap;"
+                         f"font-size:12px;color:var(--dim);max-height:260px;"
+                         f"overflow:auto'>{esc(h['tail'] or '(no output yet…)')}</pre></details>")
+        else:
+            tail_html = ""
         hist_rows.append(
             f"<tr><td style='white-space:nowrap'>{esc(h['ts'])}</td>"
-            f"<td>{_chip(h['status'])}</td>"
-            f"<td><b>{esc(h['task'][:90])}</b>{tail_html}</td></tr>")
+            f"<td>{_chip(h['status'], h['tsid'])}{_accounting(h)}</td>"
+            f"<td><b>{esc(h['task'][:90])}</b> {cancel_btn}{tail_html}</td></tr>")
     hist = (f"<div class='card'><label>recent dispatches — live status</label>"
             f"<table style='width:100%;font-size:13px;border-collapse:collapse'>{''.join(hist_rows)}</table></div>"
             if hist_rows else "")
-    # live feedback loop: while anything runs, the page re-renders itself
-    refresh_js = ("<script>setTimeout(function(){location.reload()},4000)</script>"
-                  if (any_running or live_status == "running") else "")
+    # the live tail: poll /tail and grow the <pre> in place — a real terminal
+    # feel instead of the old 4-second full-page reload; one reload at the end
+    # so history/banner/proposals re-render server-side
+    refresh_js = ""
+    if live_ts:
+        refresh_js = f"""<script>
+(function(){{
+  var ts={esc(live_ts)!r},miss=0;
+  function tick(){{
+    fetch('/tail?ts='+ts).then(function(r){{return r.json()}}).then(function(d){{
+      var pre=document.getElementById('tail-'+ts);
+      if(pre&&d.tail){{pre.textContent=d.tail;pre.scrollTop=pre.scrollHeight;}}
+      var chip=document.getElementById('chip-'+ts);
+      if(chip&&d.status)chip.textContent=d.status==='running'?'● running':d.status;
+      if(d.status==='running'){{setTimeout(tick,2000);}}else{{location.reload();}}
+    }}).catch(function(){{if(++miss<30)setTimeout(tick,4000);}});
+  }}
+  setTimeout(tick,1500);
+}})();
+</script>"""
     body_html = f"""<h1 style="margin-top:10px"><span class="bolt">▶</span> DO IT</h1>
 <p class="hint">The full hand-off brief for this action: the task, your rails, and the live
 operator context. Copy it into any AI chat — or dispatch it straight to your local agent CLI.</p>

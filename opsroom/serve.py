@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config, contextpack, counsel, db, dispatch, enrich, inbox, ops, \
-    promises, proposals, sessions, state, ventures, views
+    promises, proposals, runs, sessions, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -67,6 +67,12 @@ def _page(search_q=None) -> bytes:
             counsel.harvest_finished(ocon)  # own guard: one failing sweep can't starve the other
         except Exception:
             pass
+        try:
+            # reconcile the runs ledger with the dispatch dir: adopt live runs,
+            # finalize orphans — a dead run turns the page red instead of hiding
+            runs.sweep(ocon)
+        except Exception:
+            pass
         st = state.build_state(con)
         d = enrich.drift(con)
         lps = con.execute("""SELECT * FROM loops WHERE status='open'
@@ -92,6 +98,7 @@ def _page(search_q=None) -> bytes:
             "setup_needed": config.setup_needed(),
             "counsel": counsel.latest_open(ocon),
             "agent_on": dispatch.agent_ready(),
+            "run_failures": runs.unacked_failures(ocon),
         }
         if serve_ctx["counsel"]:
             serve_ctx["counsel_nprops"] = ocon.execute(
@@ -159,6 +166,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, f"render failed:\n{type(e).__name__}: {e}".encode(), "text/plain; charset=utf-8")
         elif url.path == "/version":
             self._send(200, str(_REV[0]).encode(), "text/plain")
+        elif url.path == "/tail":
+            # live log tail for the /do page. Read-only; ts is TS_RE-validated so
+            # this can never be steered to an arbitrary path, and the tail is
+            # re-scrubbed on read (agent output never passed the write-path scrub).
+            import json as _json
+            ts = (urllib.parse.parse_qs(url.query).get("ts") or [""])[0][:40]
+            if not dispatch.TS_RE.match(ts):
+                self._send(404, b"not found")
+                return
+            self._send(200, _json.dumps(
+                {"status": dispatch.status(ts),
+                 "tail": dispatch.tail(ts, 16384)}).encode(),
+                "application/json; charset=utf-8")
         elif url.path == "/search":
             q = (urllib.parse.parse_qs(url.query).get("q") or [""])[0]
             try:
@@ -320,6 +340,24 @@ class Handler(BaseHTTPRequestHandler):
                                    form.get("note", "")[:300])
             elif do == "advise_error_clear":
                 ops.kv_set(ocon, "advise_error", "")
+            elif do == "run_ack":
+                ts = form.get("ts", "")[:40]
+                if not dispatch.TS_RE.match(ts):
+                    self._send(400, b"bad ts")
+                    return
+                runs.ack(ocon, ts)
+            elif do == "dispatch_cancel":
+                ts = form.get("ts", "")[:40]
+                if not dispatch.TS_RE.match(ts):
+                    self._send(400, b"bad ts")
+                    return
+                dispatch.cancel(ts)
+                _bump()
+                back = form.get("back", "")
+                if back.startswith("/do"):
+                    self._send(303, b"", extra={"Location": "/do?" +
+                               urllib.parse.urlencode({"launched": ts})})
+                    return
             elif do == "loop":
                 con = db.connect()
                 try:
@@ -524,6 +562,17 @@ def _sync_loop():
             except Exception:
                 pass
             try:
+                # runs-ledger reconcile + the cross-boot watchdog: a run that
+                # outlived its console (or its timeout) gets finalized here
+                oc = ops.connect()
+                try:
+                    if runs.sweep(oc):
+                        _bump()
+                finally:
+                    oc.close()
+            except Exception:
+                pass
+            try:
                 # the advisor: the console thinks on its own schedule
                 oc = ops.connect()
                 try:
@@ -583,6 +632,16 @@ def install_always_on(port=PORT) -> bool:
 
 
 def serve(port=PORT, open_browser=True):
+    try:
+        # boot reconcile: runs that died while no console was watching become
+        # recorded facts (and red banners) before the first page renders
+        oc = ops.connect()
+        try:
+            runs.sweep(oc)
+        finally:
+            oc.close()
+    except Exception:
+        pass
     threading.Thread(target=_sync_loop, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"  # actual port (port=0 = ephemeral)
