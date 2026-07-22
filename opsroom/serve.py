@@ -32,6 +32,46 @@ TOKEN = secrets.token_urlsafe(32)  # per-boot CSRF token; embedded in every form
 _REV = [1]
 _LOCK = threading.Lock()
 
+# stale-code tripwire: the always-on console keeps running whatever code it
+# booted with; an upgrade on disk does nothing until a restart. Capture the
+# boot version here (module import = boot) and compare against the disk copy.
+import opsroom as _pkg
+BOOT_VERSION = getattr(_pkg, "__version__", "")
+_VER_CACHE = [0.0, BOOT_VERSION]  # [checked_monotonic, value]
+
+
+def _installed_version() -> str:
+    """The version currently ON DISK (re-read each call, cached 60s by the
+    caller). importlib.metadata re-reads dist-info, which pip/pipx upgrades
+    rewrite; editable installs fall back to re-parsing __init__.py by path.
+    Any failure returns BOOT_VERSION — fail closed, never a false banner."""
+    try:
+        src = Path(_pkg.__file__).read_text()
+        import re as _re
+        m = _re.search(r"__version__\s*=\s*[\"']([^\"']+)[\"']", src)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version as _v
+        return _v("opsroom-console")
+    except Exception:
+        return BOOT_VERSION
+
+
+def stale_code() -> str:
+    """The on-disk version when it differs from what this console booted with,
+    else ''. Checked at most once a minute."""
+    now = time.monotonic()
+    if now - _VER_CACHE[0] > 60:
+        _VER_CACHE[0] = now
+        try:
+            _VER_CACHE[1] = _installed_version() or BOOT_VERSION
+        except Exception:
+            _VER_CACHE[1] = BOOT_VERSION  # fail closed: never a false banner
+    return _VER_CACHE[1] if _VER_CACHE[1] != BOOT_VERSION else ""
+
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
        "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 
@@ -99,6 +139,7 @@ def _page(search_q=None) -> bytes:
             "counsel": counsel.latest_open(ocon),
             "agent_on": dispatch.agent_ready(),
             "run_failures": runs.unacked_failures(ocon),
+            "stale_code": stale_code(), "boot_version": BOOT_VERSION,
         }
         if serve_ctx["counsel"]:
             serve_ctx["counsel_nprops"] = ocon.execute(

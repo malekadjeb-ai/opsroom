@@ -391,6 +391,11 @@ def _alert_slot(sx, st, tok) -> str:
     alerts = []  # (severity, html) — higher first
     for row in (sx.get("run_failures") or [])[:3]:
         alerts.append(_run_fail_alert(row, tok))
+    if sx.get("stale_code"):
+        alerts.append((95, f"⟳ this console is running v{esc(sx.get('boot_version', '?'))} "
+                           f"but v{esc(sx['stale_code'])} is installed — restart it "
+                           f"(launchd: <code>launchctl kickstart -k gui/$UID/"
+                           f"com.opsroom.console</code>) to pick up the new code"))
     if sx.get("advise_error"):
         alerts.append((100, f"🧠 the advisor hit an error last run — "
                             f"<code>{esc(sx['advise_error'][:160])}</code> "
