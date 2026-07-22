@@ -1460,6 +1460,142 @@ in the tracker.{f" <a href='#v-{esc(st['leads_venture'])}'>open {esc(vlabel)} �
     return hero + send_html + call_html + leads_html + empty_hint
 
 
+def _palette_data(sx, st) -> str:
+    """The command palette's action list, server-rendered as an inert JSON blob.
+    Every 'post' entry maps to an EXISTING /act verb and fires through the same
+    CSRF token the page's forms already carry — the palette adds zero new
+    endpoints and zero new authority, just keyboard reach."""
+    import json as _json
+    items = [
+        {"label": "🎯 NOW", "kind": "link", "href": "#now"},
+        {"label": "📇 BOARD — the full pipeline", "kind": "link", "href": "/leads"},
+        {"label": "💰 MONEY", "kind": "link", "href": "#money"},
+        {"label": "🧠 ADVISOR — briefings + answers", "kind": "link", "href": "/counsel"},
+        {"label": "🏢 VENTURES", "kind": "link", "href": "#ventures"},
+        {"label": "📊 ACTIVITY", "kind": "link", "href": "#activity"},
+        {"label": "▶ DO IT — write an agent brief", "kind": "link", "href": "/do"},
+        {"label": "✍ DRAFT a reply", "kind": "link", "href": "/draft"},
+        {"label": "⌕ search everything", "kind": "focus", "sel": ".qsearch input"},
+    ]
+    if sx.get("agent_on"):
+        items.append({"label": "🧠 ask the board a question",
+                      "kind": "focus", "sel": "input[name=question]"})
+    if st.get("one_move"):
+        items.append({"label": f"▶ dispatch the top move — {st['one_move'][:60]}",
+                      "kind": "link", "href": do_url(st["one_move"])})
+    for r in (sx.get("due") or [])[:8]:
+        items.append({"label": f"✓ mark follow-up done — {r['target'][:50]}",
+                      "kind": "post",
+                      "fields": {"do": "followup", "fid": r["id"], "op": "done"}})
+    for p in (sx.get("proposals") or [])[:8]:
+        items.append({"label": f"🤖 apply proposal — {p['summary'][:60]}",
+                      "kind": "post",
+                      "fields": {"do": "proposal_apply", "pid": p["id"]}})
+    seen = set()
+    for key in ("replied", "due", "new", "cold"):
+        for r in ((sx.get("lanes") or {}).get(key) or {}).get("rows", []):
+            if r["name"] in seen:
+                continue
+            seen.add(r["name"])
+            items.append({"label": f"📇 open lead — {r['name'][:50]}", "kind": "link",
+                          "href": "/leads?" + urllib.parse.urlencode({"q": r["name"][:60]})})
+    blob = _json.dumps({"token": sx["token"], "items": items[:40]})
+    return blob.replace("</", "<\\/")  # a label can never close the script tag
+
+
+PALETTE_HTML = """
+<div id="pal" hidden>
+  <div id="pal-box" role="dialog" aria-label="command palette">
+    <input id="pal-q" placeholder="type a command — jump anywhere, act on anything" autocomplete="off">
+    <ul id="pal-list"></ul>
+    <div class="pal-hint">↑↓ choose · enter runs it · esc closes</div>
+  </div>
+</div>"""
+
+PALETTE_JS = """
+(function(){
+  var data=document.getElementById('pal-data');
+  if(!data)return;
+  var P=JSON.parse(data.textContent),pal=document.getElementById('pal'),
+      q=document.getElementById('pal-q'),list=document.getElementById('pal-list'),
+      cur=0,shown=[];
+  function draw(){
+    list.textContent='';
+    shown.forEach(function(it,i){
+      var li=document.createElement('li');
+      li.textContent=it.label;
+      if(i===cur)li.setAttribute('aria-selected','true');
+      li.addEventListener('click',function(){fire(it);});
+      list.appendChild(li);
+    });
+  }
+  function filt(){
+    var v=q.value.toLowerCase();
+    shown=P.items.filter(function(it){return it.label.toLowerCase().indexOf(v)>=0;}).slice(0,12);
+    cur=0;draw();
+  }
+  function open(){pal.hidden=false;q.value='';filt();q.focus();}
+  function close(){pal.hidden=true;q.blur();}
+  function fire(it){
+    close();
+    if(it.kind==='link'){
+      if(it.href.charAt(0)==='#'){location.hash=it.href;}else{location.href=it.href;}
+    }else if(it.kind==='focus'){
+      var el=document.querySelector(it.sel);
+      if(el){el.scrollIntoView({block:'center'});el.focus();}
+    }else if(it.kind==='post'){
+      var f=document.createElement('form');
+      f.method='post';f.action='/act';
+      var fields=Object.assign({token:P.token},it.fields);
+      Object.keys(fields).forEach(function(k){
+        var inp=document.createElement('input');
+        inp.type='hidden';inp.name=k;inp.value=fields[k];f.appendChild(inp);
+      });
+      document.body.appendChild(f);f.submit();
+    }
+  }
+  document.addEventListener('keydown',function(e){
+    var t=e.target,typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT');
+    if(pal.hidden){
+      if((e.key==='/'||e.key==='k')&&!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey){
+        e.preventDefault();open();
+      }
+      return;
+    }
+    if(e.key==='Escape'){close();}
+    else if(e.key==='ArrowDown'){e.preventDefault();cur=Math.min(cur+1,shown.length-1);draw();}
+    else if(e.key==='ArrowUp'){e.preventDefault();cur=Math.max(cur-1,0);draw();}
+    else if(e.key==='Enter'&&shown[cur]){e.preventDefault();fire(shown[cur]);}
+  });
+  q.addEventListener('input',filt);
+  pal.addEventListener('click',function(e){if(e.target===pal)close();});
+  window.palOpen=open;
+})();"""
+
+PALETTE_CSS = """
+#pal{position:fixed;inset:0;background:rgba(4,5,7,.62);z-index:60;
+  backdrop-filter:blur(2px)}
+#pal-box{max-width:560px;margin:9vh auto 0;background:var(--surface2);
+  border:1px solid var(--line2);border-radius:14px;overflow:hidden;
+  box-shadow:0 18px 60px rgba(0,0,0,.5)}
+#pal-q{width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;
+  background:transparent;padding:14px 16px;font-size:15px}
+#pal-q:focus{outline:0;border-color:var(--go-line)}
+#pal-list{list-style:none;margin:0;padding:6px;max-height:46vh;overflow-y:auto}
+#pal-list li{padding:8px 11px;border-radius:8px;cursor:pointer;color:var(--dim);
+  font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pal-list li:hover{background:var(--surface);color:var(--ink)}
+#pal-list li[aria-selected]{background:var(--go-dim);color:var(--ink);
+  box-shadow:inset 2px 0 0 var(--go)}
+.pal-hint{padding:7px 14px;border-top:1px solid var(--line);color:var(--faint);
+  font:11px var(--mono);letter-spacing:.05em}
+.pal-key{position:fixed;right:14px;bottom:12px;z-index:5;color:var(--faint);
+  font:11px var(--mono);border:1px solid var(--line);border-radius:6px;
+  padding:3px 7px;background:var(--surface);cursor:pointer}
+.pal-key:hover{color:var(--dim);border-color:var(--line2)}
+"""
+
+
 def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=None):
     links = config.load()["links"]
     today = datetime.now().astimezone().date()
@@ -1916,6 +2052,7 @@ footer b{{color:var(--dim)}}
   *,.panel.on>*,.meter-fill,.live{{animation:none!important;transition:none!important}}
   .meter-fill{{transform:none}}
 }}
+{PALETTE_CSS if serve_ctx else ''}
 </style></head><body>
 <header>
   <div class="brand"><h1><span class="bolt">⚡</span> OPERATOR</h1><time>{today.isoformat()}</time>{ctx_btn}</div>
@@ -1958,4 +2095,9 @@ function filt(inp, listId){{
 }}
 window.addEventListener('hashchange', route);
 route();
-</script></body></html>"""
+</script>
+{f'''<script id="pal-data" type="application/json">{_palette_data(serve_ctx, st)}</script>
+{PALETTE_HTML}
+<button class="pal-key" onclick="palOpen()" title="command palette">/ commands</button>
+<script>{PALETTE_JS}</script>''' if serve_ctx else ''}
+</body></html>"""
