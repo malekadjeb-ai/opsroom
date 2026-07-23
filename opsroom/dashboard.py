@@ -823,13 +823,14 @@ def _serve_now_block(sx, st) -> str:
     return stack + quick + cap_html + leads_html + _promises_drawer(sx, tok)
 
 
-# lane key -> (chip, why-it's-hot, board link) — same row grammar as the board
+# lane key -> (chip, why-it's-hot, board link, temperature) — same row grammar
+# as the board; temperature is state (go = money moving, warn = attention now)
 _LANE_DEFS = (
-    ("replied", "🔥 REPLIED", "a live thread — answer today", "/leads?stage=talking"),
-    ("due", "⏰ DUE TODAY", "the cadence says now", "/leads"),
-    ("new", "✨ NEW TODAY", "speed-to-lead wins", "/leads?stage=new"),
+    ("replied", "🔥 REPLIED", "a live thread — answer today", "/leads?stage=talking", "go"),
+    ("due", "⏰ DUE TODAY", "the cadence says now", "/leads", "warn"),
+    ("new", "✨ NEW TODAY", "speed-to-lead wins", "/leads?stage=new", "go"),
     ("cold", "🧊 QUOTED, GOING COLD", "untouched 3+ days — quotes decay",
-     "/leads?stage=quoted&sort=quoted"),
+     "/leads?stage=quoted&sort=quoted", "warn"),
 )
 
 
@@ -851,7 +852,7 @@ def _hot_lanes(sx, tok) -> str:
                 f"waiting, nothing due, nothing new, no quote going cold. "
                 f"{board_link}</p></div>")
     secs = ""
-    for key, chip, why, href in _LANE_DEFS:
+    for key, chip, why, href, temp in _LANE_DEFS:
         lane = lanes.get(key) or {}
         rows = lane.get("rows") or []
         if not rows:
@@ -860,7 +861,7 @@ def _hot_lanes(sx, tok) -> str:
         more = (f" <a class='hint' href='{href}'>all {n} →</a>"
                 if n > len(rows) else "")
         secs += (f"<div class='lane'><div class='lane-head'>"
-                 f"<a href='{href}'>{chip} · {n}</a>"
+                 f"<a href='{href}' class='lane-t {temp}'>{chip} · {n}</a>"
                  f"<span class='hint'>{esc(why)}</span>{more}</div>"
                  f"<table>{''.join(_lead_row(tok, r, today) for r in rows)}</table></div>")
     return (f"<div class='card' id='lanes'><div class='cardhead'>"
@@ -942,6 +943,19 @@ details.more>summary::-webkit-details-marker{display:none}
 details.more>summary:hover{color:var(--ink);border-color:var(--line2)}
 details.more[open]>summary{color:var(--go);border-color:var(--go-line)}
 .more-row{display:inline-flex;gap:5px;align-items:center;flex-wrap:wrap;margin-left:6px}
+.rl{display:inline-block;font:600 11px var(--mono);color:var(--cool);
+  border:1px solid var(--line);border-radius:6px;padding:3px 8px;
+  white-space:nowrap;vertical-align:middle;background:var(--surface2)}
+.rl:hover{border-color:rgba(89,193,240,.4);color:var(--ink);text-decoration:none}
+.rl-btn{font:600 11px var(--mono);padding:3px 8px}
+.rl-row{display:flex;flex-wrap:wrap;gap:5px}
+.funnel{display:flex;gap:3px;margin:14px 0 2px}
+.fseg{display:flex;flex-direction:column;gap:4px;min-width:58px;text-decoration:none}
+.fseg i{display:block;height:9px;border-radius:5px;opacity:.85}
+.fseg i.cool{background:var(--cool)} .fseg i.go{background:var(--go)}
+.fseg i.warn{background:var(--warn)}
+.fseg span{font:600 10.5px var(--mono);color:var(--dim);white-space:nowrap}
+.fseg:hover span{color:var(--ink)} .fseg:hover i{opacity:1}
 """
 
 # ONE nav definition for the whole product: four primaries, two minor panels.
@@ -1134,6 +1148,27 @@ def _lead_row(tok, r, today) -> str:
             f"<td style='white-space:nowrap' class='{tempcls}'>~{age}d</td>{acts}</tr>")
 
 
+def _funnel(stage_counts, q="", sort="newest") -> str:
+    """The pipeline as a shape: a proportional stage bar, new → won. Each
+    segment is the stage filter — the geometry is the glance, the click is
+    the drill-down. Empty pipeline renders nothing."""
+    stages = (("new", "cool"), ("contacted", "cool"), ("talking", "go"),
+              ("quoted", "warn"), ("won", "go"))
+    total = sum(stage_counts.get(s, 0) for s, _ in stages)
+    if not total:
+        return ""
+    segs = ""
+    for s, cls in stages:
+        n = stage_counts.get(s, 0)
+        if not n:
+            continue
+        qs = urllib.parse.urlencode({"q": q, "stage": s, "sort": sort})
+        segs += (f"<a class='fseg' style='flex:{n}' href='/leads?{qs}' "
+                 f"title='{n} {s}'><i class='{cls}'></i>"
+                 f"<span>{s} {n}</span></a>")
+    return f"<div class='funnel'>{segs}</div>"
+
+
 _STAGE_HINTS = {
     "new": "untouched — speed to lead wins",
     "contacted": "you reached out; keep the day-3 cadence",
@@ -1192,6 +1227,7 @@ def leads_page(token, buckets, stage_counts, q="", stage="", sort="newest",
     body = f"""<h1 style="margin-top:10px"><span class="bolt">📇</span> PIPELINE — {total} leads</h1>
 <p class="hint">Every lead is paid-for money moving toward won or lost. Work top of the
 board first — each ▶ dispatches an agent with this lead's full context baked into the brief.</p>
+{_funnel(stage_counts, q, sort)}
 <form method="get" action="/leads" class="row" style="margin:12px 0 0">
 <input name="q" value="{esc(q)}" placeholder="search name / phone / service / note">
 <input type="hidden" name="stage" value="{esc(stage)}">
@@ -1594,13 +1630,22 @@ def _ledger_cards(serve_ctx) -> str:
 <table>{spend_rows or '<tr><td class="hint">nothing logged out yet — ads, tools, and gear go here</td></tr>'}</table></div>"""
     roi = serve_ctx.get("roi") or []
     if roi:
-        roi_rows_html = "".join(
-            f"<tr><td><b>{esc(ventures.VENTURES.get(r['venture'], {}).get('label', r['venture']))}</b></td>"
-            f"<td>${r['collected']:,}</td><td>${r['spend']:,}</td>"
-            f"<td><b class='{'warn' if r['net'] < 0 else ''}'>"
-            f"{'−' if r['net'] < 0 else ''}${abs(r['net']):,}</b></td></tr>" for r in roi)
+        # net as a bar, not just a number — which venture carries the P&L is
+        # the glance this table exists for
+        peak = max((abs(r["net"]) for r in roi), default=0) or 1
+        roi_rows_html = ""
+        for r in roi:
+            pct = max(3, round(100 * abs(r["net"]) / peak)) if r["net"] else 0
+            bar = (f"<i class='roi-bar {'leak' if r['net'] < 0 else 'go'}' "
+                   f"style='width:{pct}%'></i>" if pct else "")
+            roi_rows_html += (
+                f"<tr><td><b>{esc(ventures.VENTURES.get(r['venture'], {}).get('label', r['venture']))}</b></td>"
+                f"<td>${r['collected']:,}</td><td>${r['spend']:,}</td>"
+                f"<td><b class='{'warn' if r['net'] < 0 else ''}'>"
+                f"{'−' if r['net'] < 0 else ''}${abs(r['net']):,}</b></td>"
+                f"<td class='roi-cell'>{bar}</td></tr>")
         out += f"""<div class="card"><div class="cardhead"><h3>📈 Where the money comes from — per-venture P&amp;L</h3></div>
-<table><tr><th>venture</th><th>in</th><th>out</th><th>net</th></tr>{roi_rows_html}</table>
+<table><tr><th>venture</th><th>in</th><th>out</th><th>net</th><th></th></tr>{roi_rows_html}</table>
 <p class="hint">Attribution is whatever venture you logged on each entry — honest and simple.</p></div>"""
     return out
 
@@ -1866,13 +1911,16 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
         n_actions = len(send) + len(call) + (1 if leads_n else 0)
         act_lbl = "queued (from notes)"
 
-    def _cell(num, lbl, cls=""):
+    def _cell(num, lbl, cls="", extra=""):
         return (f"<div class='hud-cell'><span class='hud-num {cls}'>{num}</span>"
-                f"<span class='hud-lbl'>{esc(lbl)}</span></div>")
+                f"<span class='hud-lbl'>{esc(lbl)}</span>{extra}</div>")
 
     days_cell = (_cell(f"{days}", "days left", "leak" if days < 14 else "")
                  if days is not None else _cell("—", "no goal set"))
-    cash_cell = (_cell(f"${cash:,}", f"of {st['goal_label']}", "go")
+    # the goal % lives IN the cash cell — a two-pixel truth bar, always on screen
+    cash_meter = (f"<i class='hud-meter'><b style='width:{cash_pct}%'></b></i>"
+                  if goal else "")
+    cash_cell = (_cell(f"${cash:,}", f"of {st['goal_label']}", "go", cash_meter)
                  if goal else _cell("—", "set a goal"))
     lead_cell = _cell(f"{leads_n}", "open leads",
                       "warn" if led_age >= 7 else "")
@@ -2093,7 +2141,10 @@ header::before{{content:"";position:absolute;inset:0 0 auto;height:1px;
 .brand .ctx:hover{{border-color:var(--go-line);color:var(--go);text-decoration:none}}
 .hud{{display:flex;gap:10px;flex-wrap:wrap}}
 .hud-cell{{flex:1 1 auto;min-width:92px;display:flex;flex-direction:column;gap:1px;
-  padding:7px 12px 8px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}}
+  padding:7px 12px 8px;border:1px solid var(--line);border-radius:9px;background:var(--surface);
+  position:relative;overflow:hidden}}
+.hud-meter{{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--bg2)}}
+.hud-meter b{{position:absolute;left:0;top:0;bottom:0;background:var(--go);display:block}}
 .hud-num{{font-size:19px;font-weight:600;color:var(--ink);letter-spacing:-.01em}}
 .hud-num.go{{color:var(--go)}} .hud-num.warn{{color:var(--warn)}} .hud-num.leak{{color:var(--leak)}}
 .hud-lbl{{font-size:11px;color:var(--dim);letter-spacing:.02em}}
@@ -2142,6 +2193,8 @@ details.more[open]>summary{{color:var(--go);border-color:var(--go-line)}}
   font:600 12.5px var(--sans);letter-spacing:.04em;margin-bottom:2px}}
 .lane-head>a:first-child{{color:var(--ink);text-decoration:none}}
 .lane-head>a:first-child:hover{{color:var(--go)}}
+.lane-head>a.lane-t.go{{color:var(--go)}} .lane-head>a.lane-t.warn{{color:var(--warn)}}
+.lane-head>a.lane-t:hover{{filter:brightness(1.2)}}
 
 /* NEXT MOVE — the top-ranked action, writ large inside DO NOW */
 .next-move{{position:relative;margin:2px 12px 10px;padding:14px 16px;border-radius:11px;
@@ -2270,6 +2323,9 @@ details.trap summary{{font-weight:650;color:var(--warn)}}
 /* ACTIVITY */
 .bar{{display:inline-block;height:9px;border-radius:5px;background:var(--cool);
   vertical-align:middle;margin-right:7px;opacity:.85}}
+.roi-cell{{width:30%;min-width:90px}}
+.roi-bar{{display:block;height:9px;border-radius:5px}}
+.roi-bar.go{{background:var(--go)}} .roi-bar.leak{{background:var(--leak)}}
 .loop{{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line)}}
 .loop:last-child{{border-bottom:0}}
 .loop .dot{{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none}}
