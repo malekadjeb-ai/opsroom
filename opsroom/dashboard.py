@@ -196,7 +196,8 @@ def _f(token, fields: dict, label: str, cls: str = "btn small", confirm: str = "
 
 def _momentum_strip(st, sx, cash, goal, days):
     """A single honest pace line: today's collected vs what today needs to hit goal.
-    Not a vanity metric — it's the number that says 'are you on track today'."""
+    Not a vanity metric — it's the number that says 'are you on track today'.
+    Lives in the rail on the operator screen."""
     if not goal:
         return ""
     today_cash = int((sx.get("tape") or {}).get("cash") or 0)
@@ -231,9 +232,9 @@ def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
     for d in dispatches[:4]:
         stop = _f(token, {"do": "dispatch_cancel", "ts": d["ts"]}, "✕",
                   "btn small gray", confirm="Cancel this agent run?") if token else ""
-        chips += (f"<a class='sess cowork busy' href='{esc(do_url(d['task'][:200]))}"
+        chips += (f"<span class='sess-wrap'><a class='sess cowork busy' href='{esc(do_url(d['task'][:200]))}"
                   f"&launched={esc(d['ts'])}' style='text-decoration:none'>"
-                  f"<b>🤖 dispatched</b><span>{esc(d['task'][:60]) or 'brief'} · running</span></a>{stop}")
+                  f"<b>🤖 dispatched</b><span>{esc(d['task'][:60]) or 'brief'} · running</span></a>{stop}</span>")
     for qd in queued[:4]:
         import json as _json
         try:
@@ -257,6 +258,51 @@ def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
     return (f"<div class='card sessions'><div class='cardhead'>"
             f"<h3>🟢 AGENTS RUNNING</h3><span class='meta'>{head}</span></div>"
             f"<div class='sess-row'>{chips}</div></div>")
+
+
+def _money_rail(sx, cash, goal, days, goal_label) -> str:
+    """MONEY, folded onto the operator screen: the whole position in four numbers
+    and one bar. The full ledger stays one click deep at #money."""
+    spent = int(sx.get("spend_total") or 0)
+    net = cash - spent
+    rows = f"<div class='rk'><span>collected</span><b class='go'>${cash:,}</b></div>"
+    if goal:
+        remaining = max(0, goal - cash)
+        need_day = math.ceil(remaining / days) if days and days > 0 else remaining
+        pct = min(100, round(100 * cash / goal))
+        rows += (f"<div class='meter rail-meter'><div class='meter-fill' "
+                 f"style='--pct:{max(pct, 0)}'></div></div>"
+                 f"<div class='meter-cap'><span>{pct}%</span>"
+                 f"<span>${remaining:,} to go</span></div>"
+                 f"<div class='rk'><span>needed / day</span><b>${need_day:,}</b></div>")
+    if spent:
+        rows += (f"<div class='rk'><span>spent</span><b class='warn'>−${spent:,}</b></div>"
+                 f"<div class='rk'><span>net P&amp;L</span>"
+                 f"<b class='{'go' if net >= 0 else 'leak'}'>${net:,}</b></div>")
+    return (f"<div class='rail-card'><div class='rail-head'>💰 {esc(goal_label) if goal else 'MONEY'}"
+            f"<a href='#money'>ledger →</a></div>{rows}</div>")
+
+
+def _map_card(counts) -> str:
+    """The operation map: every surface one glance away, each row carrying a live
+    fact — the visible answer to 'where do I go' (the / palette is the fast path)."""
+    rows = ""
+    for label, href, fact in counts:
+        fact_html = f"<b>{fact}</b>" if fact else ""
+        rows += (f"<a class='rk maprow' href='{esc(href)}'><span>{label}</span>"
+                 f"{fact_html}</a>")
+    return (f"<div class='rail-card'><div class='rail-head'>🗺 THE ROOM</div>"
+            f"{rows}</div>")
+
+
+def _rail(sx, st, cash, goal, days, counts) -> str:
+    """The live rail of the operator screen: pace, money, agents running, the
+    operation map. One glance = the whole operation; the work column stays work."""
+    return (_momentum_strip(st, sx, cash, goal, days)
+            + _money_rail(sx, cash, goal, days, st["goal_label"])
+            + _sessions_strip(sx.get("sessions"), sx.get("dispatches"),
+                              sx.get("queued"), sx["token"])
+            + _map_card(counts))
 
 
 def md_html(md: str) -> str:
@@ -679,8 +725,10 @@ def _serve_now_block(sx, st) -> str:
     """The reorganized NOW: today's momentum tape, the single ranked DO NOW stack,
     the LOG IT quick-actions, the inbox, and the full leads worklist (collapsed)."""
     tok = sx["token"]
-    stack = (_counsel_card(sx) + _ask_bar(sx) + _proposals_strip(sx)
-             + _do_now_stack(sx, st, tok))
+    # hero first: the ranked answer leads the column; approvals and the briefing
+    # read after it, in tap-priority order
+    stack = (_do_now_stack(sx, st, tok) + _proposals_strip(sx)
+             + _counsel_card(sx) + _ask_bar(sx))
     vopts = _vopts()
     quick = f"""<details class="card logit"><summary>✍️ LOG IT — touch · cash · lead · capture</summary>
 <div class="cardhead"><a class="btn small gray" href="/draft">✍ draft a reply</a></div>
@@ -1778,16 +1826,29 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     stale = "".join(f"<span class='pill warn'>{esc(p['name'])} untouched {p['age_days']}d</span>"
                     for p in st["pipelines"] if p["age_days"] >= 3)
     if serve_ctx:
-        # LIVE: one alert, one pace line, one ranked stack. Ten seconds to "what do I do".
-        momentum = _momentum_strip(st, serve_ctx, cash, goal, days)
-        sess_strip = _sessions_strip(serve_ctx.get("sessions"),
-                                     serve_ctx.get("dispatches"),
-                                     serve_ctx.get("queued"), serve_ctx["token"])
+        # LIVE: the operator screen — one alert, one ranked work column, one live
+        # rail (pace / money / agents / map). Ten seconds to "what do I do".
         setup = setup_card(serve_ctx["token"]) if serve_ctx.get("setup_needed") else ""
+        spent_now = int(serve_ctx.get("spend_total") or 0)
+        lanes_now = serve_ctx.get("lanes") or {}
+        hot_n = sum((lanes_now.get(k) or {}).get("n", 0) for k, *_ in _LANE_DEFS)
+        leads_open = len(serve_ctx.get("leads") or [])
+        counts = [
+            ("📇 board", "/leads",
+             f"{leads_open} open" + (f" · {hot_n} hot" if hot_n else "") if leads_open else ""),
+            ("💰 money", "#money",
+             f"net ${cash - spent_now:,}" if (cash or spent_now) else ""),
+            ("🧠 advisor", "/counsel", ""),
+            ("🏢 ventures", "#ventures",
+             f"{len(st['ventures'])}" if st["ventures"] else ""),
+            ("📊 activity", "#activity", ""),
+        ]
+        rail = _rail(serve_ctx, st, cash, goal, days, counts)
         now_tab = (setup + _alert_slot(serve_ctx, st, serve_ctx["token"])
-                   + momentum + sess_strip
+                   + "<div class='ops'><div class='ops-col'>"
                    + _serve_now_block(serve_ctx, st)
-                   + (f"<p>{stale}</p>" if stale else ""))
+                   + (f"<p>{stale}</p>" if stale else "")
+                   + f"</div><aside class='ops-rail'>{rail}</aside></div>")
     else:
         # STATIC snapshot (opsroom dash): the classic hero + queues, no write-backs.
         # Built only here — live requests never pay for HTML they throw away.
@@ -1954,10 +2015,9 @@ b{{font-weight:650}}
 header{{position:sticky;top:0;z-index:var(--z-sticky);
   background:linear-gradient(var(--bg),rgba(10,11,13,.92));backdrop-filter:blur(8px);
   border-bottom:1px solid var(--line);padding:11px 18px 0;}}
-/* the header rides the same 920px column as the content — a full-bleed HUD over
+/* the header rides the same column as the content — a full-bleed HUD over
    a centered page was half the "spread out" feeling */
-header>.brand,header>.hud,header>.qsearch,header>nav{{max-width:920px;
-  margin-left:auto;margin-right:auto}}
+.hwrap{{max-width:920px;margin:0 auto}}
 header::before{{content:"";position:absolute;inset:0 0 auto;height:1px;
   background:linear-gradient(90deg,transparent,var(--go-line),transparent);opacity:.6}}
 .brand{{display:flex;align-items:baseline;gap:10px;margin-bottom:9px}}
@@ -2167,6 +2227,26 @@ input.amt{{width:76px;background:var(--bg2);border:1px solid var(--line);border-
   border-radius:12px;padding:13px 16px;margin:13px 0;color:var(--dim);font-size:13px}}
 .tape b{{color:var(--ink);font-family:var(--mono);font-size:16px;font-weight:600;margin-right:3px}}
 
+/* the operator screen: work column + live rail (one column until the screen is wide) */
+.ops{{display:grid;grid-template-columns:minmax(0,1fr);gap:0 22px;align-items:start}}
+.ops-col,.ops-rail{{min-width:0}}
+.rail-card{{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:11px 14px 12px;margin:13px 0}}
+.rail-head{{display:flex;align-items:baseline;gap:8px;font:700 10.5px var(--mono);
+  letter-spacing:.09em;color:var(--faint);margin-bottom:7px;text-transform:uppercase}}
+.rail-head a{{margin-left:auto;font:600 11px var(--mono);color:var(--faint);
+  letter-spacing:.02em;text-transform:none}}
+.rail-head a:hover{{color:var(--cool);text-decoration:none}}
+.rk{{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  padding:3px 0;font-size:12.5px;color:var(--dim)}}
+.rk b{{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:14.5px;
+  color:var(--ink);font-weight:600}}
+.rk b.go{{color:var(--go)}} .rk b.warn{{color:var(--warn)}} .rk b.leak{{color:var(--leak)}}
+a.maprow{{color:var(--dim);border-radius:7px;margin:0 -7px;padding:5px 7px}}
+a.maprow:hover{{background:var(--surface2);color:var(--ink);text-decoration:none}}
+a.maprow b{{font-size:11.5px;color:var(--faint);font-weight:600}}
+.rail-meter{{height:8px;margin:8px 0 4px}}
+
 /* momentum pace strip */
 .mo{{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px 16px;margin:13px 0}}
 .mo-head{{display:flex;justify-content:space-between;align-items:baseline}}
@@ -2180,6 +2260,8 @@ input.amt{{width:76px;background:var(--bg2);border:1px solid var(--line);border-
 
 /* live agent sessions */
 .sessions .sess-row{{display:flex;gap:9px;flex-wrap:wrap}}
+.sess-wrap{{display:flex;gap:6px;align-items:center;min-width:0}}
+.sess-wrap .sess{{flex:1;min-width:0}}
 .sess{{display:flex;flex-direction:column;gap:1px;border:1px solid var(--line);border-radius:9px;
   padding:7px 11px;background:var(--bg2);min-width:150px}}
 .sess b{{font-size:13px;color:var(--ink)}}
@@ -2209,6 +2291,33 @@ details.logit summary:hover{{color:var(--go)}}
   .ar{{flex-wrap:wrap}} .ar-acts{{width:100%;justify-content:flex-start;margin-top:4px}}
 }}
 
+/* wide viewport: the operator screen goes two-column; secondary panels stay a
+   centered reading column one click deep */
+@media (min-width:1180px){{
+  html{{scroll-padding-top:126px}}
+  main{{max-width:1392px}}
+  .panel{{max-width:920px;margin-left:auto;margin-right:auto}}
+  #now.panel{{max-width:none;margin-left:0;margin-right:0}}
+  .ops{{grid-template-columns:minmax(0,1fr) 312px}}
+  .ops-rail{{position:sticky;top:122px}}
+  .ops-rail .mo{{padding:11px 14px}}
+  .ops-rail .mo-head b{{font-size:15px}}
+  .ops-rail .sessions .sess-row{{flex-direction:column}}
+  .ops-rail .sess{{min-width:0}}
+  /* two-row command deck: brand + HUD up top, nav + search below — the whole
+     header stays out of the operator's way */
+  .hwrap{{max-width:1392px;display:grid;grid-template-columns:minmax(0,1fr) auto;
+    gap:2px 26px;align-items:center;
+    grid-template-areas:"brand hud" "nav search"}}
+  .hwrap>.brand{{grid-area:brand;margin-bottom:0}}
+  .hwrap>.hud{{grid-area:hud;justify-content:flex-end;flex-wrap:nowrap}}
+  .hwrap>.qsearch{{grid-area:search;margin:0;width:340px;justify-self:end}}
+  .hwrap>nav{{grid-area:nav;margin:4px 0 0}}
+  .hud-cell{{flex:0 1 auto;min-width:0;flex-direction:row;align-items:baseline;
+    gap:7px;padding:5px 12px 6px;white-space:nowrap}}
+  .hud-num{{font-size:16px}}
+}}
+
 footer{{color:var(--faint);font-size:12px;text-align:center;margin:28px auto 0;
   display:flex;gap:7px;justify-content:center;align-items:center;flex-wrap:wrap}}
 footer b{{color:var(--dim)}}
@@ -2231,12 +2340,12 @@ footer b{{color:var(--dim)}}
 }}
 {PALETTE_CSS if serve_ctx else ''}
 </style></head><body>
-<header>
+<header><div class="hwrap">
   <div class="brand"><h1><span class="bolt">⚡</span> OPERATOR</h1><time>{today.isoformat()}</time>{ctx_btn}</div>
   {head_stats}
   {qbox}
   {_main_nav()}
-</header>
+</div></header>
 <main>
 <div class="panel" id="now">{now_tab}</div>
 <div class="panel" id="ventures">{ventures_tab}</div>
