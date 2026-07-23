@@ -6,6 +6,7 @@ Fictional fixtures."""
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -14,7 +15,10 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
-    with tempfile.TemporaryDirectory() as td:
+    # ignore_cleanup_errors: the dispatch waiter thread may still be flushing
+    # ops.db WAL files while rmtree walks the dir (the CI ENOTEMPTY flake) —
+    # we also join the threads below, this is the belt to that suspenders
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         os.environ["OPSROOM_DATA_DIR"] = str(Path(td) / "data")
         cfg_dir = Path(td) / "config"
         cfg_dir.mkdir()
@@ -65,6 +69,11 @@ timeout_minutes = 0.02
         assert any(f["ts"] == r["ts"] for f in runs.unacked_failures(ocon))
         ocon.close()
         os.environ.pop("OPSROOM_FAKE_SLEEP")
+        # let dispatch's _reap/_escalate threads finish their last DB writes
+        # before the tmpdir is deleted under them
+        for t in threading.enumerate():
+            if t is not threading.current_thread():
+                t.join(timeout=10)
 
     print("watchdog gate: over-timeout runs killed, recorded, explained, alerted")
     return 0
