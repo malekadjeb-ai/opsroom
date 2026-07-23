@@ -84,6 +84,18 @@ def run(fire: bool = False) -> int:
                   f"{len(cfg['ventures'])} defined" if cfg["ventures"]
                   else "run `opsroom init`", warn=True)
 
+    # ---- the link registry (resources-per-task: rows carry their sources)
+    from . import resources, ventures as _v
+    n_global = len(resources.global_links())
+    n_vlinks = sum(len(resources.venture_links(k)) for k in _v.VENTURES)
+    _line(bool(n_global), "[links] registry",
+          f"{n_global} global link{'s' if n_global != 1 else ''}"
+          + (f" + {n_vlinks} venture" if n_vlinks else "")
+          if n_global or n_vlinks else
+          'empty — task rows can carry every source they need: add e.g. '
+          'mail_drafts / leads / calendar under [links], and links = '
+          '{gbp = "https://…"} on a [[venture]]', warn=True)
+
     # ---- databases + permissions
     for name, p in (("activity.db", db.DB_PATH), ("ops.db", ops.db_path())):
         if p.exists():

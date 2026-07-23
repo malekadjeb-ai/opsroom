@@ -15,7 +15,7 @@ Python 3.11+ required. Stdlib only — if your change needs `pip install` anythi
 
 ## Test gates
 
-21 script-style gates. Every one must exit 0 before a PR:
+39 script-style gates. Every one must exit 0 before a PR:
 
 ```
 for t in tests/test_*.py; do python3 "$t" || break; done

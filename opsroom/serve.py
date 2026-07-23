@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import config, contextpack, counsel, db, dispatch, enrich, inbox, ops, \
-    promises, proposals, runs, sessions, state, ventures, views
+    promises, proposals, resources, runs, sessions, state, ventures, views
 
 PORT = 7337
 SYNC_EVERY = 900  # seconds between background source syncs
@@ -401,11 +401,11 @@ class Handler(BaseHTTPRequestHandler):
                     p = (config.data_dir() / "dispatch"
                          / f"{ts}{'-brief.md' if what == 'brief' else '.log'}")
                     target = p if p.is_file() else None
-                elif what == "config":
-                    p = config.config_dir() / "config.toml"
-                    target = p if p.is_file() else None
-                elif what == "data":
-                    target = config.data_dir()
+                else:
+                    # config/data/daily/pipelines/note/venture — one resolver,
+                    # shared with the dashboard so a chip only renders when
+                    # this exact call would succeed
+                    target = resources.reveal_target(what, form.get("key", "")[:40])
                 if target is None:
                     self._send(400, b"unknown reveal target")
                     return

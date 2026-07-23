@@ -134,12 +134,17 @@ dashboard_note = "{dashboard_note}"
 pipeline_dir = "{pipeline_dir}"
 
 [links]
-# One-tap buttons on the console. Leave empty to hide.
+# The link registry: any key = any URL, all render as ↗ chips in the console.
+# These keys also land on the task rows that need them: mail_drafts on SEND
+# rows, leads on lead rows, calendar on follow-ups. Empty = hidden.
 mail_drafts = ""
 leads = ""
+calendar = ""
 
 # One block per venture/project. track: A/B/C/D = revenue lanes shown first.
 # trap = true marks $0-revenue build work (the "engineer's trap" — visible, not shameful).
+# Optional per venture: links = {{gbp = "https://…", lsa = "https://…"}} — they
+# ride every row scoped to that venture (leads, follow-ups, its detail page).
 {ventures}
 '''
 

@@ -81,7 +81,8 @@ pipeline_dir = "{pipes}"
 
 [links]
 mail_drafts = "https://mail.google.com/mail/u/0/#drafts"
-leads = ""
+leads = "https://ads.example/leads"
+calendar = "https://calendar.example/week"
 
 [[venture]]
 key = "meridian"
@@ -94,6 +95,7 @@ target_table = "meridian-targets"
 playbook = ["Always propose the 3-tier ladder; anchor on the outcome, not hours"]
 offer = "The 2-week ops sprint is $12,000 flat — scoped up front, no retainers, you keep everything."
 draft_style = "b2b"
+links = {{crm = "https://crm.example/meridian"}}
 
 [[venture]]
 key = "shopkit"
@@ -112,6 +114,7 @@ trap = false
 live_prefix = "open leads"
 offer = "Full details start at $249, interiors at $189 — I come to you, nothing to drop off."
 draft_style = "service"
+links = {{gbp = "https://business.example/detailpro", lsa = "https://ads.example/detailpro"}}
 
 [[venture]]
 key = "blog-engine"

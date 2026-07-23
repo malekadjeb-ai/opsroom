@@ -9,7 +9,7 @@ import re
 import urllib.parse
 from datetime import datetime, timezone
 
-from . import config, ops, ventures
+from . import config, ops, resources, ventures
 
 PHONE = re.compile(r"\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}")
 DOMAIN = re.compile(r"\b([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+(?:/[^\s,;)|<]*)?)", re.I)
@@ -112,7 +112,7 @@ def _targets_block(key, st):
 <div id="{lid}">{items}</div></div>"""
 
 
-def _venture_detail(v, st, today, live=False):
+def _venture_detail(v, st, today, live=False, tok=""):
     key = v["key"]
     meta = ventures.VENTURES.get(key, {})
     nxt = st["next"].get(key, [])
@@ -148,10 +148,14 @@ def _venture_detail(v, st, today, live=False):
     nl = v['open_loops']
     m = (f"this week {_hm(v['week_min'])} · last touch {_rel(v['last_activity'], today)}"
          + (f" · {nl} open loop{'s' if nl != 1 else ''}" if nl else ""))
+    res_row = _res(tok, "leads", key, reveals=("venture", "pipelines"), key=key)
+    res_html = (f"<div class='rl-row' style='margin:2px 0 10px'>{res_row}</div>"
+                if res_row else "")
     return f"""<div class="panel" id="v-{esc(key)}">
 <a class="back" href="#ventures">← all ventures</a>
 <div class="vhead"><h2>{f"<span class='track'>TRACK {esc(v['track'])}</span> " if v['track'] else ''}{esc(v['label'])}</h2>
 <p class="role">{esc(v['revenue'])} · {m}</p></div>
+{res_html}
 {loop_chip}
 <div class="card action"><h3>▶ DO NEXT — in order</h3><ol class="next">{next_items or '<li>nothing queued</li>'}</ol></div>
 {numbers}
@@ -260,6 +264,32 @@ def _sessions_strip(sess, dispatches=None, queued=None, token="") -> str:
             f"<div class='sess-row'>{chips}</div></div>")
 
 
+# pretty chip labels for registry keys (the key itself is the fallback)
+_LINK_LABELS = {"mail_drafts": "drafts", "leads": "leads board"}
+
+
+def _res(tok, kind: str = "", venture: str = "", reveals=(), key: str = "") -> str:
+    """The resources strip for a task row: every external source + reveal the
+    task needs, as quiet chips. Unconfigured → renders nothing (never a dead
+    link); reveal chips render only when the exact server call would succeed,
+    and only in served mode (they're CSRF-gated POSTs)."""
+    bits = ""
+    for label, url in resources.for_task(kind, venture):
+        label = _LINK_LABELS.get(label, label.replace("_", " "))
+        bits += (f"<a class='rl' href='{esc(url)}' target='_blank' "
+                 f"rel='noopener'>↗ {esc(label)}</a>")
+    if tok:
+        for what in reveals:
+            if resources.reveal_target(what, key) is None:
+                continue
+            fields = {"do": "reveal", "what": what}
+            if key:
+                fields["key"] = key
+            lbl = "📂 folder" if what == "venture" else f"📂 {what}"
+            bits += _f(tok, fields, lbl, "btn small gray rl-btn")
+    return bits
+
+
 def _money_rail(sx, cash, goal, days, goal_label) -> str:
     """MONEY, folded onto the operator screen: the whole position in four numbers
     and one bar. The full ledger stays one click deep at #money."""
@@ -295,14 +325,33 @@ def _map_card(counts) -> str:
             f"{rows}</div>")
 
 
+def _links_card(tok) -> str:
+    """The operator's bookmarks: the whole [links] registry plus the reveal
+    verbs — every place the work actually happens, one tap from the rail."""
+    ext = "".join(
+        f"<a class='rl' href='{esc(u)}' target='_blank' rel='noopener'>"
+        f"↗ {esc(_LINK_LABELS.get(k, k.replace('_', ' ')))}</a>"
+        for k, u in resources.global_links().items())
+    revs = ""
+    for what in ("daily", "note", "pipelines", "config"):
+        if resources.reveal_target(what) is not None:
+            revs += _f(tok, {"do": "reveal", "what": what}, f"📂 {what}",
+                       "btn small gray rl-btn")
+    if not ext and not revs:
+        return ""
+    return (f"<div class='rail-card'><div class='rail-head'>⚡ QUICK</div>"
+            f"<div class='rl-row'>{ext}{revs}</div></div>")
+
+
 def _rail(sx, st, cash, goal, days, counts) -> str:
     """The live rail of the operator screen: pace, money, agents running, the
-    operation map. One glance = the whole operation; the work column stays work."""
+    operation map, quick links. One glance = the whole operation."""
     return (_momentum_strip(st, sx, cash, goal, days)
             + _money_rail(sx, cash, goal, days, st["goal_label"])
             + _sessions_strip(sx.get("sessions"), sx.get("dispatches"),
                               sx.get("queued"), sx["token"])
-            + _map_card(counts))
+            + _map_card(counts)
+            + _links_card(sx["token"]))
 
 
 def md_html(md: str) -> str:
@@ -539,16 +588,6 @@ def _promises_drawer(sx, tok) -> str:
             f"{len(proms)} staged by agent sessions</summary>{rows}</details>")
 
 
-def _drafts_link() -> str:
-    """A ↗ straight to where the sending actually happens (config [links]
-    mail_drafts) — the console tells you WHERE to go, not just what to do."""
-    url = (config.load().get("links") or {}).get("mail_drafts") or ""
-    if not url.startswith(("http://", "https://")):
-        return ""
-    return (f"<a class='btn small gray' href='{esc(url)}' target='_blank' "
-            f"rel='noopener'>↗ drafts</a>")
-
-
 def _do_now_stack(sx, st, tok) -> str:
     """THE surface: one money-ranked list of everything worth doing right now, each
     row DOable inline. Replaces the old pile of separate reply/due/send/call/leads/
@@ -559,25 +598,42 @@ def _do_now_stack(sx, st, tok) -> str:
     for r in sx.get("replies", []):
         who = r["from_name"] or r["from_email"] or r["target"] or "?"
         draft = f"<a class='btn small' href='{esc(draft_url(r['venture'] or '', who, r['snippet'] or ''))}'>✍ draft</a>"
-        btns = draft + _f(tok, {"do": "reply", "rid": r["id"], "op": "handled"}, "✓ done", "btn small gray") \
+        src = _safe_url(r["link"] if "link" in r.keys() else "")
+        ext = (f"<a class='rl' href='{esc(src)}' target='_blank' rel='noopener'>↗ open it</a>"
+               if src else _res(tok, "reply", r["venture"] or ""))
+        btns = draft + ext \
+            + _f(tok, {"do": "reply", "rid": r["id"], "op": "handled"}, "✓ done", "btn small gray") \
             + _f(tok, {"do": "reply", "rid": r["id"], "op": "dismiss"}, "×", "btn small gray")
         sub = esc(r["subject"] or "") + (f" · “{esc((r['snippet'] or '')[:80])}”" if r["snippet"] else "")
         items.append((100, ("REPLIED", "hot", f"{esc(who)} replied — call or answer",
                            f"{esc(r['venture'] or '')} · {sub}", btns)))
 
-    # the operator's single top move
+    # the operator's single top move — carries its source (the dashboard note)
     if st.get("one_move"):
-        btns = f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it</a>"
+        btns = (f"<a class='btn small' href='{esc(do_url(st['one_move']))}'>▶ do it</a>"
+                + _res(tok, reveals=("note",)))
         items.append((92, ("TOP MOVE", "go",
                           _linkify(esc(st["one_move"])) + " " + _src_pill(st),
                           "", btns)))
 
-    # due follow-ups — the thread dies if you miss these
+    # due follow-ups — the thread dies if you miss these. If the target is a
+    # known lead, the row carries the phone: zero hunting between row and dial.
+    phones = {}
+    for lr in sx.get("leads") or []:
+        nm = (lr["name"] or "").strip().lower()
+        if nm and lr["phone"]:
+            phones.setdefault(nm, lr["phone"])
     for r in sx["due"]:
         task = f"Follow up with {r['target']}" + (f" — {r['note']}" if r["note"] else "")
-        btns = f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or ''))}'>▶</a>" \
-            + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"}, "✓ done") \
-            + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray")
+        ph = phones.get((r["target"] or "").strip().lower())
+        tel = (f"<a class='btn small' href='tel:{re.sub(r'[^0-9]', '', ph)}'>☎ call</a>"
+               if ph else "")
+        btns = tel \
+            + f"<a class='btn small gray' href='{esc(do_url(task, r['venture'] or ''))}'>▶</a>" \
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "done"},
+                 "✓ done", "btn small gray" if ph else "btn small") \
+            + _f(tok, {"do": "followup", "fid": r["id"], "op": "snooze"}, "+1d", "btn small gray") \
+            + _res(tok, "followup", r["venture"] or "")
         items.append((88, ("FOLLOW UP", "warn", f"Call {esc(r['target'])}",
                           f"{esc(r['venture'] or '')} · due {esc(r['due'])}", btns)))
 
@@ -595,7 +651,8 @@ def _do_now_stack(sx, st, tok) -> str:
         vents = [r["venture"] for r in leads if r["venture"]]
         vk = max(set(vents), key=vents.count) if vents else ""
         btns = (f"<a class='btn small' href='/leads?status=open&sort=aged'>work them →</a>"
-                f"<a class='btn small gray' href='{esc(do_url(('Call the open leads newest first' + (f' for {vk}' if vk else '')), vk))}'>▶</a>")
+                f"<a class='btn small gray' href='{esc(do_url(('Call the open leads newest first' + (f' for {vk}' if vk else '')), vk))}'>▶</a>"
+                + _res(tok, "leads", vk))
         items.append((84 if aged else 62, (
             "LEADS", "warn" if aged else "cool",
             f"{len(leads)} open leads — call newest first",
@@ -619,7 +676,7 @@ def _do_now_stack(sx, st, tok) -> str:
     if len(routine_send) == 1:
         r = routine_send[0]
         btns = (f"<a class='btn small' href='{esc(draft_url(_venture_of(r), r['target']))}'>✍ draft</a>"
-                + _drafts_link())
+                + _res(tok, "send", _venture_of(r)))
         items.append((74, ("SEND", "go", f"Send → {esc(r['target'])}",
                           f"{esc(r['channel'])} · {_linkify(esc(r['next'] or 'day-3 call'))}", btns)))
     elif routine_send:
@@ -630,7 +687,7 @@ def _do_now_stack(sx, st, tok) -> str:
         items.append((74, (
             "SEND", "go", f"{len(routine_send)} drafts ready — send them",
             f"<details><summary style='cursor:pointer'>every target, one tap each</summary>"
-            f"{inner}</details>", _drafts_link())))
+            f"{inner}</details>", _res(tok, "send"))))
     if len(call) == 1:
         r = call[0]
         m = PHONE.search(r["next"] or "")
@@ -1038,7 +1095,8 @@ def _lead_actions(tok, r) -> str:
 <input type='hidden' name='token' value='{esc(tok)}'><input type='hidden' name='do' value='lead_stage'>
 <input type='hidden' name='id' value='{r['id']}'><input type='hidden' name='back' value='/leads'>
 <select name='stage' class='stg'>{stage_opts}</select>
-<button class='btn small gray'>set</button></form>""")
+<button class='btn small gray'>set</button></form>"""
+        + _res(tok, "leads", r["venture"] or ""))
     return (
         _f(tok, {"do": "lead_touch", "id": r["id"], "kind": "called", "back": "/leads"},
            "☎ called", "btn small gray")
@@ -1656,11 +1714,16 @@ def _palette_data(sx, st) -> str:
         {"label": "▶ jump to DO NOW", "kind": "focus", "sel": "#donow"},
         {"label": "🤖 jump to proposals", "kind": "focus", "sel": "#proposals"},
         {"label": "📇 jump to the hot lanes", "kind": "focus", "sel": "#lanes"},
-        {"label": "📂 reveal the config file (Finder)", "kind": "post",
-         "fields": {"do": "reveal", "what": "config"}},
-        {"label": "📂 reveal dispatch logs (Finder)", "kind": "post",
-         "fields": {"do": "reveal", "what": "data"}},
     ]
+    for what, lbl in (("config", "the config file"), ("data", "dispatch logs"),
+                      ("daily", "the daily notes"), ("note", "the dashboard note"),
+                      ("pipelines", "the pipeline trackers")):
+        if resources.reveal_target(what) is not None:
+            items.append({"label": f"📂 reveal {lbl} (Finder)", "kind": "post",
+                          "fields": {"do": "reveal", "what": what}})
+    for k, u in resources.global_links().items():
+        items.append({"label": f"↗ open {_LINK_LABELS.get(k, k.replace('_', ' '))}",
+                      "kind": "link", "href": u})
     if st.get("one_move"):
         items.append({"label": f"▶ dispatch the top move — {st['one_move'][:60]}",
                       "kind": "link", "href": do_url(st["one_move"])})
@@ -1858,7 +1921,8 @@ def render(st, drift, loops, sessions, agents=None, serve_ctx=None, search_ctx=N
     # ---------- VENTURES ----------
     rev_cards, trap_rows, trap_min, details_pages = "", "", 0, ""
     for v in st["ventures"]:
-        details_pages += _venture_detail(v, st, today, live=bool(serve_ctx))
+        details_pages += _venture_detail(v, st, today, live=bool(serve_ctx),
+                                         tok=serve_ctx["token"] if serve_ctx else "")
         first_next = (st["next"].get(v["key"]) or ["—"])[0]
         if v["trap"]:
             trap_min += v["week_min"]
@@ -2114,6 +2178,14 @@ details.more[open]>summary{{color:var(--go);border-color:var(--go-line)}}
 .btn.gray:hover{{color:var(--ink);filter:none;border-color:var(--line2)}}
 a{{color:var(--cool);text-decoration:none}} a:hover{{text-decoration:underline}}
 a.tel{{color:var(--go);font-weight:600}}
+
+/* resource chips — every source a task needs, right on its row */
+.rl{{display:inline-block;font:600 11px var(--mono);color:var(--cool);
+  border:1px solid var(--line);border-radius:6px;padding:3px 8px;
+  white-space:nowrap;vertical-align:middle;background:var(--surface2)}}
+.rl:hover{{border-color:rgba(89,193,240,.4);color:var(--ink);text-decoration:none}}
+.rl-btn{{font:600 11px var(--mono);padding:3px 8px}}
+.rl-row{{display:flex;flex-wrap:wrap;gap:5px}}
 
 /* tables */
 table{{border-collapse:collapse;width:100%;font-size:13.5px}}
