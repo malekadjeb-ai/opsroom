@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.15.0 — 2026-07-22 · "the operator's screen"
+
+The shape changes: four tabs of words become one wide operator screen.
+
+- **Two-column NOW** — at wide viewports the console becomes a work column
+  (NEXT MOVE hero → DO NOW → agent proposals → briefing → pipeline lanes)
+  plus a sticky live rail: today's pace, MONEY folded in (goal meter,
+  needed/day, net P&L), agents running, THE ROOM map with live counts, and
+  ⚡ QUICK links. One glance = the whole operation. Narrow screens keep the
+  single column; secondary panels stay a reading column one click deep.
+- **Command-deck header** — brand + HUD on one row, nav + search on the
+  next (~97px, was ~195px). The HUD cash cell carries a 2px goal meter.
+- **Resources-per-task** — every row answers "what do I need to open to
+  finish this": follow-ups carry ☎ tel (when the target is a known lead)
+  and ↗ calendar, SEND rows carry ↗ drafts, replied rows carry ↗ open-it,
+  the TOP MOVE carries 📂 its source note, lead rows and venture pages
+  carry their venture's own links. New link registry: any `[links]` key +
+  per-venture `links = {gbp = "…"}` tables — unconfigured or non-http(s)
+  renders nothing, never a dead link.
+- **Reveal grows names** — daily / pipelines / note / venture join
+  brief/log/config/data. The client still sends names only; one resolver
+  (opsroom/resources.py) is shared by the server whitelist and the UI, so
+  a 📂 chip only renders when the call would succeed.
+- **Information design** — /leads gets a proportional stage funnel
+  (new→won, each segment a filter), per-venture P&L rows grow net bars,
+  hot-lane headers take their temperature color.
+- `opsroom doctor` suggests `[links]` when the registry is empty.
+  39 gates (new: test_resources).
+
 ## 0.14.0 — 2026-07-22 · "glass box"
 
 Know what you're about to do, where it runs, and where everything lives.
